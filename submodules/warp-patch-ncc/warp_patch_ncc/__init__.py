@@ -1,4 +1,4 @@
-from typing import NamedTuple
+from typing import NamedTuple, Tuple
 import torch
 import torch.nn as nn
 from . import _C
@@ -35,7 +35,7 @@ def warp_patch_ncc(
     cx_n: float,
     cy_n: float,
     debug: bool,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor]:
     params = WarpParams(
         R.contiguous(),
         T.contiguous(),

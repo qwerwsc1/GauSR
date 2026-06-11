@@ -11,7 +11,7 @@
 
 import json
 import os
-from typing import Any, Sequence, Union
+from typing import Any, Sequence, Union, List
 
 import numpy as np
 import torch
@@ -83,8 +83,8 @@ class Scene:
             print(f"Loading Test Cameras: {len(self.test_cameras[resolution_scale])} .")
 
             print("computing nearest_id")
-            camera_centers_list: list[torch.Tensor] = []
-            center_rays_list: list[torch.Tensor] = []
+            camera_centers_list: List[torch.Tensor] = []
+            center_rays_list: List[torch.Tensor] = []
             with torch.no_grad():
                 for id, cur_cam in enumerate(self.train_cameras[resolution_scale]):
                     camera_centers_list.append(cur_cam.camera_center)

@@ -13,7 +13,7 @@ from argparse import ArgumentParser, Namespace
 import os
 from random import randint, sample
 import sys
-from typing import Sequence, TypedDict
+from typing import Sequence, TypedDict, Tuple
 import uuid
 
 import torch
@@ -349,7 +349,7 @@ def training_report(
     # Report test and samples of training set
     if iteration in testing_iterations:
         torch.cuda.empty_cache()
-        validation_configs: tuple[ValidationConfig, ...] = (
+        validation_configs: Tuple[ValidationConfig, ...] = (
             {"name": "test", "cameras": scene.getTestCameras()},
             {
                 "name": "train",
