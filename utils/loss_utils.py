@@ -197,11 +197,11 @@ class PatchMatch:
             else:
                 depth_normal_show = (((depth_normal + 1.0) * 0.5).permute(1, 2, 0).clamp(0, 1) * 255).detach().cpu().numpy().astype(np.uint8)
             d_mask_show = (weights.float() * 255).detach().cpu().numpy().astype(np.uint8)
-            d_mask_show_color = cv2.applyColorMap(d_mask_show, cv2.COLORMAP_JET)
+            d_mask_show_color = cv2.applyColorMap(d_mask_show, cv2.COLORMAP_MAGMA)
             depth = render_pkg["expected_depth"].squeeze().detach().cpu().numpy()
             depth_i = (depth - depth.min()) / (depth.max() - depth.min() + 1e-20)
             depth_i = (depth_i * 255).clip(0, 255).astype(np.uint8)
-            depth_color = cv2.applyColorMap(depth_i, cv2.COLORMAP_JET)
+            depth_color = cv2.applyColorMap(depth_i, cv2.COLORMAP_MAGMA)
             row0 = np.concatenate([gt_img_show, img_show, depth_normal_show], axis=1)
             row1 = np.concatenate([d_mask_show_color, depth_color, normal_show], axis=1)
             image_to_show = np.concatenate([row0, row1], axis=0)

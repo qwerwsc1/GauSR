@@ -212,27 +212,27 @@ def training(
 
         loss = rgb_loss + opt.lambda_depth_normal * depth_normal_loss + opt.lambda_multi_view_ncc * ncc_loss + opt.lambda_multi_view_geo * geo_loss
 
-        if iteration % 200 == 0:
-            import numpy as np
-            import cv2
-            rend_gt = viewpoint_cam.original_image[0:3, :, :]
-            rend_image = render_pkg['render']
-            rend_depth = render_pkg['expected_depth']
-            rend_depth_normal = depth_to_normal(viewpoint_cam, rend_depth)
-            rend_normal = torch.nn.functional.normalize(render_pkg['normal'], dim=0)
-            
-            gt_show = (rend_gt.permute(1, 2, 0).clamp(0,1)[:,:,[2,1,0]]*255).detach().cpu().numpy().astype(np.uint8)
-            rend_img_show = (rend_image.permute(1, 2, 0).clamp(0,1)[:,:,[2,1,0]]*255).detach().cpu().numpy().astype(np.uint8)
-            depth_magma_show = visualize_depth_magma(rend_depth.detach().permute(1, 2, 0).squeeze())
-            normal_show = ((rend_normal * 0.5 + 0.5).clamp(0,1) * 255).permute(1, 2, 0).detach().cpu().numpy().astype(np.uint8)
-            depth_normal_show = ((rend_depth_normal * 0.5 + 0.5).clamp(0, 1) * 255).permute(1, 2, 0).detach().cpu().numpy().astype(np.uint8)
-            
-            row0 = np.concatenate([gt_show, rend_img_show, depth_magma_show, depth_normal_show, normal_show], axis=1)
-            image_to_show = np.concatenate([row0], axis=0)
-            
-            debug_path = os.path.join(scene.model_path, "debug")
-            os.makedirs(debug_path, exist_ok=True)
-            cv2.imwrite(os.path.join(debug_path, "%05d"%iteration + "_" + viewpoint_cam.image_name + ".png"), image_to_show)
+        # if iteration % 200 == 0:
+        #     import numpy as np
+        #     import cv2
+        #     rend_gt = viewpoint_cam.original_image[0:3, :, :]
+        #     rend_image = render_pkg['render']
+        #     rend_depth = render_pkg['expected_depth']
+        #     rend_depth_normal = depth_to_normal(viewpoint_cam, rend_depth)
+        #     rend_normal = torch.nn.functional.normalize(render_pkg['normal'], dim=0)
+        #
+        #     gt_show = (rend_gt.permute(1, 2, 0).clamp(0,1)[:,:,[2,1,0]]*255).detach().cpu().numpy().astype(np.uint8)
+        #     rend_img_show = (rend_image.permute(1, 2, 0).clamp(0,1)[:,:,[2,1,0]]*255).detach().cpu().numpy().astype(np.uint8)
+        #     depth_magma_show = visualize_depth_magma(rend_depth.detach().permute(1, 2, 0).squeeze())
+        #     normal_show = ((rend_normal * 0.5 + 0.5).clamp(0,1) * 255).permute(1, 2, 0).detach().cpu().numpy().astype(np.uint8)
+        #     depth_normal_show = ((rend_depth_normal * 0.5 + 0.5).clamp(0, 1) * 255).permute(1, 2, 0).detach().cpu().numpy().astype(np.uint8)
+        #
+        #     row0 = np.concatenate([gt_show, rend_img_show, depth_magma_show, depth_normal_show, normal_show], axis=1)
+        #     image_to_show = np.concatenate([row0], axis=0)
+        #
+        #     debug_path = os.path.join(scene.model_path, "debug")
+        #     os.makedirs(debug_path, exist_ok=True)
+        #     cv2.imwrite(os.path.join(debug_path, "%05d"%iteration + "_" + viewpoint_cam.image_name + ".png"), image_to_show)
             
         loss.backward()
 
