@@ -182,7 +182,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 testing_iterations,
                 scene,
                 render,
-                (pipe, background, kernel_size),
+                (pipe, background, dataset.kernel_size),
                 use_wandb,
             )
             if iteration in saving_iterations:
