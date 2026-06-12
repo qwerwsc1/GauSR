@@ -9,15 +9,20 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+import os, sys, uuid, torch
 from argparse import ArgumentParser, Namespace
-import os
 from random import randint, sample
-import sys
 from typing import Sequence, TypedDict, Tuple
-import uuid
-
-import torch
 from tqdm import tqdm
+
+from arguments import ModelParams, OptimizationParams, PipelineParams
+from gaussian_renderer import network_gui, render
+from scene import GaussianModel, Scene
+from scene.cameras import Camera
+from utils.general_utils import safe_state
+from utils.graphics_utils import depth_double_to_normal, depth_to_normal
+from utils.image_utils import psnr
+from utils.loss_utils import l1_loss, ssim, L1_loss_appearance, PatchMatch
 
 try:
     import wandb
@@ -25,59 +30,7 @@ except ImportError:
     wandb = None
 os.environ.setdefault("WANDB_SILENT", "true")
 
-from arguments import ModelParams, OptimizationParams, PipelineParams
-from gaussian_renderer import network_gui, render
-from scene import GaussianModel, Scene
-from scene.cameras import Camera
-from utils.general_utils import safe_state
-from utils.graphics_utils import (
-    depth_double_to_normal,
-    depth_to_normal,
-)
-from utils.image_utils import psnr
-from utils.loss_utils import (
-    l1_loss,
-    ssim,
-    L1_loss_appearance,
-    PatchMatch,
-)
-
-def visualize_depth_magma(depth, inverse=True):
-    import cv2
-    import numpy as np
-    """Visualize the depth map with colormap.
-       Rescales the values so that depth_min and depth_max map to 0 and 1,
-       respectively.
-    """
-    if isinstance(depth, torch.Tensor):
-        depth = depth.detach().cpu().numpy()
-    
-    if inverse:
-        depth = 1.0 / (depth + 1e-6)
-    
-    depth_min = np.percentile(depth, 5)
-    depth_max = np.percentile(depth, 95)
-    
-    depth[depth < depth_min] = depth_min
-    depth[depth > depth_max] = depth_max
-    
-    depth_scaled = (depth - depth_min) / ((depth_max - depth_min) + 1e-20)
-    depth_scaled_uint8 = np.uint8(depth_scaled * 255)
-    depth_color = cv2.applyColorMap(depth_scaled_uint8, cv2.COLORMAP_MAGMA)
-    
-    return depth_color
-
-def training(
-    dataset,
-    opt,
-    pipe,
-    testing_iterations,
-    saving_iterations,
-    checkpoint_iterations,
-    checkpoint,
-    debug_from,
-    use_wandb = False):
-    
+def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, use_wandb = False):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
@@ -86,70 +39,31 @@ def training(
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
+        
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-    kernel_size = dataset.kernel_size
 
     iter_start = torch.cuda.Event(enable_timing=True)
     iter_end = torch.cuda.Event(enable_timing=True)
 
     trainCameras = scene.getTrainCameras().copy()
-    if dataset.disable_filter3D:
+    if dataset.disable_filter3D:    # default false
         gaussians.reset_3D_filter()
     else:
         gaussians.compute_3D_filter(cameras=trainCameras)
 
-    if opt.lambda_multi_view_ncc > 0 or opt.lambda_multi_view_geo > 0:
-        patchmatch = PatchMatch(
-            opt.multi_view_patch_size,
-            opt.multi_view_pixel_noise_th,
-            kernel_size=kernel_size,
-            pipe=pipe,
-            debug=True,
-            model_path=dataset.model_path,
-        )
+    patchmatch = PatchMatch(opt.multi_view_patch_size, opt.multi_view_pixel_noise_th, kernel_size=dataset.kernel_size, pipe=pipe,debug=True, model_path=dataset.model_path)
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
     ema_normal_loss_for_log = 0.0
     ema_ncc_loss_for_log = 0.0
-    os.makedirs(os.path.join(dataset.model_path, "debug"), exist_ok=True)
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
     for iteration in range(first_iter, opt.iterations + 1):
-        if network_gui.conn == None:
-            network_gui.try_connect()
-        while network_gui.conn != None:
-            try:
-                net_image_bytes = None
-                (
-                    custom_cam,
-                    do_training,
-                    pipe.convert_SHs_python,
-                    pipe.compute_cov3D_python,
-                    keep_alive,
-                    scaling_modifer,
-                ) = network_gui.receive()
-                if custom_cam != None:
-                    net_image = render(
-                        custom_cam,
-                        gaussians,
-                        pipe,
-                        background,
-                        kernel_size,
-                        scaling_modifer,
-                    )["render"]
-                    net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
-                network_gui.send(net_image_bytes, dataset.source_path)
-                if do_training and ((iteration < int(opt.iterations)) or not keep_alive):
-                    break
-            except Exception as e:
-                network_gui.conn = None
 
         iter_start.record()
-
         gaussians.update_learning_rate(iteration)
-
         # Every 1000 its we increase the levels of SH up to a maximum degree
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()
@@ -164,14 +78,7 @@ def training(
             pipe.debug = True
 
         reg_kick_on = iteration >= opt.regularization_from_iter
-        render_pkg = render(
-            viewpoint_cam,
-            gaussians,
-            pipe,
-            background,
-            kernel_size,
-            require_depth=reg_kick_on,
-        )
+        render_pkg = render(viewpoint_cam, gaussians, pipe, background, dataset.kernel_size, require_depth=reg_kick_on)
         rendered_image: torch.Tensor
         rendered_image, viewspace_point_tensor, visibility_filter, radii = (
             render_pkg["render"],

@@ -108,8 +108,8 @@ class OptimizationParams(ParamGroup):
         self.regularization_from_iter = 7000
         self.densify_grad_threshold = 0.0002
 
-        self.lambda_multi_view_geo = 0.0 # 0.02
-        self.lambda_multi_view_ncc = 0.0 # 0.3
+        self.lambda_multi_view_geo = 0.02
+        self.lambda_multi_view_ncc = 0.3
         self.multi_view_patch_size = 3
         self.multi_view_pixel_noise_th = 1.0
 
