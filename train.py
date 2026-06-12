@@ -443,10 +443,10 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[15000])
     parser.add_argument("--start_checkpoint", type=str, default=None)
     # additional argument for using wandb
-    parser.add_argument("--use_wandb", action='store_true', default=False, help="Use wandb to record loss value")
-    parser.add_argument("--wandb_project", type=str, default="GS4SR", help="Wandb project name")
+    parser.add_argument("--use_wandb", action='store_true', default=True, help="Use wandb to record loss value")
+    parser.add_argument("--wandb_project", type=str, default="GauSR", help="Wandb project name")
     parser.add_argument("--wandb_entity", type=str, default="scwaang-", help="Wandb entity/team name")
-    parser.add_argument("--run_name", type=str, default="dtu-gs", help="Wandb run name")
+    parser.add_argument("--run_name", type=str, default="tnt", help="Wandb run name")
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
