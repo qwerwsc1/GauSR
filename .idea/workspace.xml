@@ -6,6 +6,7 @@
   <component name="ChangeListManager">
     <list default="true" id="db4181d0-6801-425f-b6af-863c2eef7e3c" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/arguments/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/arguments/__init__.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/evaluate_dtu_mesh.py" beforeDir="false" afterPath="$PROJECT_DIR$/evaluate_dtu_mesh.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/scene/gaussian_model.py" beforeDir="false" afterPath="$PROJECT_DIR$/scene/gaussian_model.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/scripts/dtu.sh" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/dtu.sh" afterDir="false" />
@@ -134,7 +135,7 @@
       <workItem from="1780884460710" duration="3679000" />
       <workItem from="1781067877603" duration="175000" />
       <workItem from="1781075569466" duration="6872000" />
-      <workItem from="1781197579899" duration="4497000" />
+      <workItem from="1781197579899" duration="6377000" />
     </task>
     <servers />
   </component>
