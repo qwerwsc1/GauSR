@@ -86,6 +86,7 @@ class GaussianModel:
         self.K = dataset.K
         self.adjacent_matrix = None
         self.propagate_features = not dataset.not_propagate_features
+        self.distance_coefficient = dataset.distance_coefficient
 
         self.setup_functions()
         self.appearance_network: Optional[AppearanceNetwork] = None
