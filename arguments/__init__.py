@@ -84,6 +84,7 @@ class ModelParams(ParamGroup):
         self.multi_view_min_dis = 0.01
         self.multi_view_max_dis = 1.5
 
+        self.distance_coefficient = 100.
         self.geovalue_mul = 5.0
         self.K = 10
         self.distance_coefficient = 100.
