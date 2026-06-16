@@ -33,7 +33,7 @@ os.environ.setdefault("WANDB_SILENT", "true")
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, use_wandb = False):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset.sh_degree)
+    gaussians = GaussianModel(dataset)
     scene = Scene(dataset, gaussians, geovalue_init=opt.geovalue_init)
     gaussians.training_setup(opt)
     if checkpoint:
@@ -203,7 +203,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                         size_threshold,
                     )
                     gaussians.compute_adjacent_matrix()
-                    
+
                     if dataset.disable_filter3D:
                         gaussians.reset_3D_filter()
                     else:

@@ -63,9 +63,9 @@ class GaussianModel:
         self.geovalue_activation = lambda x: self.geovalue_mul * torch.sigmoid(x) # torch.log(1 + torch.clamp_min(x, 0))
         self.inverse_geovalue_activation = lambda y: inverse_sigmoid(y / self.geovalue_mul) # torch.exp(y / self.geovalue_mul) - 1
 
-    def __init__(self, sh_degree: int):
+    def __init__(self, dataset):
         self.active_sh_degree = 0
-        self.max_sh_degree = sh_degree
+        self.max_sh_degree = dataset.sh_degree
 
         self.geovalue_mul = 5.0
         self._geovalue = torch.empty(0)
@@ -82,6 +82,11 @@ class GaussianModel:
         self.optimizer: Optional[torch.optim.Optimizer] = None
         self.percent_dense = 0.0
         self.spatial_lr_scale = 0.0
+
+        self.K = dataset.K
+        self.adjacent_matrix = None
+        self.propagate_features = not dataset.not_propagate_features
+
         self.setup_functions()
         self.appearance_network: Optional[AppearanceNetwork] = None
         self._appearance_embeddings: Optional[torch.nn.Parameter] = None
@@ -171,7 +176,16 @@ class GaussianModel:
     def get_features(self):
         features_dc = self._features_dc
         features_rest = self._features_rest
-        return torch.cat((features_dc, features_rest), dim=1)
+        features = torch.cat((features_dc, features_rest), dim=1)
+        if self.propagate_features:
+            assert self.adjacent_matrix is not None
+            assert len(self.adjacent_matrix) == len(self.get_xyz)
+            xyz = self.get_xyz[:, None, :]  # (N, 1, 3)
+            neighbor_xyz = self.get_xyz[self.adjacent_matrix, :] # (N, K, 3)
+            self._weights = torch.nn.functional.normalize((1 - torch.exp(-self.get_geovalue)) * torch.exp(-torch.norm(xyz - neighbor_xyz, dim=-1, p=2) * self.distance_coefficient), dim=-1, p=1) # (N, K)
+            # self._weights = torch.nn.functional.normalize(footprint_activations[FOOTPRINT_DISTRIBUTION](self.get_geovalue) * torch.exp(-torch.norm(xyz - neighbor_xyz, dim=-1, p=2) * self.distance_coefficient), dim=-1, p=1) # (N, K)
+            neighbor_features = features[self.adjacent_matrix, :, :] # (N, K, F, 3)
+            return (self._weights[:, :, None, None] * neighbor_features).sum(dim=1)
 
     @property
     def get_geovalue(self):

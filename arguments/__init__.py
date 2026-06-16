@@ -85,6 +85,11 @@ class ModelParams(ParamGroup):
         self.multi_view_max_dis = 1.5
 
         self.geovalue_mul = 5.0
+        self.K = 10
+        self.distance_coefficient = 100.
+        self.not_propagate_features = False
+        self.not_use_ray_dir = False
+        self.not_use_reflected_ray_dir = False
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
