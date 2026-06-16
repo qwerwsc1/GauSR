@@ -144,6 +144,8 @@ class OptimizationParams(ParamGroup):
         self.geovalue_cull = inverse_footprint_activations[FOOTPRINT_DISTRIBUTION](0.05)
         self.geovalue_reset = inverse_footprint_activations[FOOTPRINT_DISTRIBUTION](0.01)
         self.geovalue_post_cull = inverse_footprint_activations[FOOTPRINT_DISTRIBUTION](0.05)
+        self.geovalue_reset_interval = 3000
+        self.geovalue_reset_until_iter = 15_000
 
         super().__init__(parser, "Optimization Parameters")
 
