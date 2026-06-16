@@ -355,7 +355,7 @@ class GaussianModel:
             {"params": [self._xyz], "lr": spatial_lr, "name": "xyz"},
             {"params": [self._features_dc], "lr": training_args.feature_lr, "name": "f_dc"},
             {"params": [self._features_rest], "lr": training_args.feature_lr / 20.0, "name": "f_rest"},
-            {"params": [self._opacity], "lr": training_args.opacity_lr, "name": "opacity"},
+            # {"params": [self._opacity], "lr": training_args.opacity_lr, "name": "opacity"},
             {'params': [self._geovalue], 'lr': training_args.geovalue_lr_init, "name": "geovalue"},
             {"params": [self._scaling], "lr": training_args.scaling_lr, "name": "scaling"},
             {"params": [self._rotation], "lr": training_args.rotation_lr, "name": "rotation"},
@@ -514,8 +514,10 @@ class GaussianModel:
         geovalue_new = self.inverse_geovalue_activation(torch.min(opacities_new, torch.ones_like(opacities_new)*value))
         # opacities_new = self.inverse_opacity_activation(opacities_new)
 
-        optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
-        self._opacity = optimizable_tensors["opacity"]
+        optimizable_tensors = self.replace_tensor_to_optimizer(geovalue_new, "geovalue")
+        self._geovalue = optimizable_tensors["geovalue"]
+        # optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
+        # self._opacity = optimizable_tensors["opacity"]
 
     def load_ply(self, path):
         plydata = PlyData.read(path)
