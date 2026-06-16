@@ -201,7 +201,7 @@ __global__ void __launch_bounds__(BLOCK_X* BLOCK_Y)
                     const float2 d = {xy.x - point_xy[p].x, xy.y - point_xy[p].y};
                     float power    = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
                     G[p]           = expf(power);
-                    float alpha    = fminf(0.99f, con_o.w * G[p]);
+                    float alpha    = fminf(0.99f, footprint_activation(con_o.w * G[p]));
                     valid[p]       = !((contributor >= last_contributor[p]) || (power > 0.0f) || (alpha < 1.0f / 255.0f));
                     any_valid      = any_valid || valid[p];
                 }
@@ -216,7 +216,7 @@ __global__ void __launch_bounds__(BLOCK_X* BLOCK_Y)
                 for (int p = 0; p < point_num_round; p++) {
                     if (valid[p]) {
                         const float2 d              = {xy.x - point_xy[p].x, xy.y - point_xy[p].y};
-                        float alpha                 = fminf(0.99f, con_o.w * G[p]);
+                        float alpha                 = fminf(0.99f, footprint_activation(con_o.w * G[p]));
                         T[p]                        = T[p] / (1.f - alpha);
                         const float blending_weight = alpha * T[p];
 
@@ -230,6 +230,8 @@ __global__ void __launch_bounds__(BLOCK_X* BLOCK_Y)
                         float dL_dopa  = (t - accum_t_rec[p]) * dL_dDepth[p];
                         dL_dopa *= T[p];
                         dL_dopa += -dL_dfinalT_times_finalT[p] / (1.f - alpha);
+
+                        dL_dopa *= dfootprint_activation(con_o.w * G[p]);
                         const float dL_dt = blending_weight * dL_dDepth[p];
                         dL_dt_local += dL_dt;
                         dL_dray_planes_local.x += dL_dt * d.x;

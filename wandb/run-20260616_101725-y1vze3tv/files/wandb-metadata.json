@@ -1,0 +1,56 @@
+{
+  "os": "Linux-5.15.0-139-generic-x86_64-with-glibc2.17",
+  "python": "CPython 3.8.20",
+  "startedAt": "2026-06-16T01:17:25.750059Z",
+  "args": [
+    "-s",
+    "/media/wangsc/T7/datasets/dtu_dataset/dtu/scan24",
+    "-m",
+    "/media/wangsc/T7/outputs/gs/dtu/",
+    "-r",
+    "2",
+    "--use_decoupled_appearance",
+    "3"
+  ],
+  "program": "/home/wangsc/Documents/SurR/codes/GauSR/train.py",
+  "codePath": "train.py",
+  "codePathLocal": "train.py",
+  "git": {
+    "remote": "https://github.com/qwerwsc1/GauSR.git",
+    "commit": "e7d74fd01d060e6f7bb44ee6fa0c5bba24109a99"
+  },
+  "root": "/home/wangsc/Documents/SurR/codes/GauSR",
+  "host": "ikuko-20",
+  "executable": "/home/wangsc/miniconda3/envs/gausr/bin/python",
+  "cpu_count": 6,
+  "cpu_count_logical": 12,
+  "gpu": "NVIDIA GeForce RTX 2080 Ti",
+  "gpu_count": 2,
+  "disk": {
+    "/": {
+      "total": "918599180288",
+      "used": "194394669056"
+    }
+  },
+  "memory": {
+    "total": "67099418624"
+  },
+  "gpu_nvidia": [
+    {
+      "name": "NVIDIA GeForce RTX 2080 Ti",
+      "memoryTotal": "11811160064",
+      "cudaCores": 4352,
+      "architecture": "Turing",
+      "uuid": "GPU-5500b2c9-c6db-6f67-4063-19179a241364"
+    },
+    {
+      "name": "NVIDIA GeForce RTX 2080 Ti",
+      "memoryTotal": "11811160064",
+      "cudaCores": 4352,
+      "architecture": "Turing",
+      "uuid": "GPU-7c6a8348-67f2-fc72-5d8f-07905ec577f0"
+    }
+  ],
+  "cudaVersion": "13.0",
+  "writerId": "qk39dv9tgkb5wwsh46p9vl9rz3o7nv2o"
+}

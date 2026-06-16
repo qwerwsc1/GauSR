@@ -12,6 +12,23 @@
 from argparse import ArgumentParser, Namespace
 import sys
 import os
+import torch
+from math import sqrt, log, atanh, pow
+
+FOOTPRINT_DISTRIBUTION = 0 # 0 - Gaussian, 1 - Laplace, 2 - Logistic
+inverse_footprint_activations = {
+    # 0: (lambda y: (2.1213 - erfinv(2 * sqrt(1 - y) - 1)) / 0.7071), 
+    0: (lambda y: pow(-log(1 - y) / 0.03279, 1 / 3.4)), 
+    1: (lambda y: 6 + log(2 - 2 * sqrt(1 - y))), 
+    2: (lambda y: 7 - 2 * atanh(2 * sqrt(1 - y) - 1))
+}
+footprint_activations = {
+    # 0: (lambda x: 1 - 0.25 * ((1 + torch.erf(2.1213 - 0.7071 * x)) ** 2)), 
+    0: (lambda x: 1 - torch.exp(-0.03279 * torch.pow(x, 3.4))), 
+    1: (lambda x: 1 - 0.25 * ((1 + torch.sgn(6 - x) * (1 - torch.exp(-torch.abs(6 - x)))) ** 2)), 
+    2: (lambda x: 1 - 0.25 * ((1 + torch.tanh(3.5 - 0.5 * x)) ** 2))
+}
+
 
 class GroupParams:
     pass
@@ -66,6 +83,8 @@ class ModelParams(ParamGroup):
         self.multi_view_max_angle = 30
         self.multi_view_min_dis = 0.01
         self.multi_view_max_dis = 1.5
+
+        self.geovalue_mul = 5.0
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -112,6 +131,14 @@ class OptimizationParams(ParamGroup):
         self.lambda_multi_view_ncc = 0.3
         self.multi_view_patch_size = 3
         self.multi_view_pixel_noise_th = 1.0
+
+        self.geovalue_lr_init = 0.01
+        self.geovalue_lr_final = 0.05
+        self.geovalue_lr_max_steps = 7_000
+        self.geovalue_init = inverse_footprint_activations[FOOTPRINT_DISTRIBUTION](0.1)
+        self.geovalue_cull = inverse_footprint_activations[FOOTPRINT_DISTRIBUTION](0.05)
+        self.geovalue_reset = inverse_footprint_activations[FOOTPRINT_DISTRIBUTION](0.01)
+        self.geovalue_post_cull = inverse_footprint_activations[FOOTPRINT_DISTRIBUTION](0.05)
 
         super().__init__(parser, "Optimization Parameters")
 

@@ -34,7 +34,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
-    scene = Scene(dataset, gaussians)
+    scene = Scene(dataset, gaussians, geovalue_init=opt.geovalue_init)
     gaussians.training_setup(opt)
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
@@ -80,12 +80,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         reg_kick_on = iteration >= opt.regularization_from_iter
         render_pkg = render(viewpoint_cam, gaussians, pipe, background, dataset.kernel_size, require_depth=reg_kick_on)
         rendered_image: torch.Tensor
-        rendered_image, viewspace_point_tensor, visibility_filter, radii = (
-            render_pkg["render"],
-            render_pkg["viewspace_points"],
-            render_pkg["visibility_filter"],
-            render_pkg["radii"],
-        )
+        rendered_image, viewspace_point_tensor, visibility_filter, radii = \
+            render_pkg["render"],render_pkg["viewspace_points"],render_pkg["visibility_filter"],render_pkg["radii"]
         gt_image = viewpoint_cam.original_image.cuda()
 
         Ll1_render = L1_loss_appearance(rendered_image, gt_image, gaussians, viewpoint_cam.uid)
@@ -127,16 +123,16 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         #     rend_depth = render_pkg['expected_depth']
         #     rend_depth_normal = depth_to_normal(viewpoint_cam, rend_depth)
         #     rend_normal = torch.nn.functional.normalize(render_pkg['normal'], dim=0)
-        #
+        
         #     gt_show = (rend_gt.permute(1, 2, 0).clamp(0,1)[:,:,[2,1,0]]*255).detach().cpu().numpy().astype(np.uint8)
         #     rend_img_show = (rend_image.permute(1, 2, 0).clamp(0,1)[:,:,[2,1,0]]*255).detach().cpu().numpy().astype(np.uint8)
         #     depth_magma_show = visualize_depth_magma(rend_depth.detach().permute(1, 2, 0).squeeze())
         #     normal_show = ((rend_normal * 0.5 + 0.5).clamp(0,1) * 255).permute(1, 2, 0).detach().cpu().numpy().astype(np.uint8)
         #     depth_normal_show = ((rend_depth_normal * 0.5 + 0.5).clamp(0, 1) * 255).permute(1, 2, 0).detach().cpu().numpy().astype(np.uint8)
-        #
+        
         #     row0 = np.concatenate([gt_show, rend_img_show, depth_magma_show, depth_normal_show, normal_show], axis=1)
         #     image_to_show = np.concatenate([row0], axis=0)
-        #
+        
         #     debug_path = os.path.join(scene.model_path, "debug")
         #     os.makedirs(debug_path, exist_ok=True)
         #     cv2.imwrite(os.path.join(debug_path, "%05d"%iteration + "_" + viewpoint_cam.image_name + ".png"), image_to_show)
@@ -203,6 +199,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                         scene.cameras_extent,
                         size_threshold,
                     )
+                    
                     if dataset.disable_filter3D:
                         gaussians.reset_3D_filter()
                     else:
@@ -370,16 +367,8 @@ if __name__ == "__main__":
     # Start GUI server, configure and run training
     # network_gui.init(args.ip, args.port)
     # torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(
-        dataset=lp.extract(args),
-        opt=op.extract(args),
-        pipe=pp.extract(args),
-        testing_iterations=args.test_iterations,
-        saving_iterations=args.save_iterations,
-        checkpoint_iterations=args.checkpoint_iterations,
-        checkpoint=args.start_checkpoint,
-        debug_from=args.debug_from,
-    )
+    training(dataset=lp.extract(args), opt=op.extract(args), pipe=pp.extract(args), testing_iterations=args.test_iterations, saving_iterations=args.save_iterations, 
+             checkpoint_iterations=args.checkpoint_iterations, checkpoint=args.start_checkpoint, debug_from=args.debug_from)
     
     # All done
     if args.use_wandb and wandb is not None:

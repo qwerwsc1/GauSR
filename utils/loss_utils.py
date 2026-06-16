@@ -139,23 +139,15 @@ class PatchMatch:
         with torch.no_grad():
             ix = (torch.arange(W, device="cuda", dtype=torch.float32) - viewpoint_cam.Cx) / viewpoint_cam.Fx
             iy = (torch.arange(H, device="cuda", dtype=torch.float32) - viewpoint_cam.Cy) / viewpoint_cam.Fy
-            view_to_nearest_T = (
-                -viewpoint_cam.world_view_transform[:3, :3].T @ nearest_cam.R @ nearest_cam.T + viewpoint_cam.world_view_transform[3, :3]
-            )
+            view_to_nearest_T = -viewpoint_cam.world_view_transform[:3, :3].T @ nearest_cam.R @ nearest_cam.T + viewpoint_cam.world_view_transform[3, :3]
             nearest_to_view_R = nearest_cam.R.transpose(1, 0) @ viewpoint_cam.world_view_transform[:3, :3]
 
         depth_reshape = render_pkg["expected_depth"].squeeze().unsqueeze(-1)
         pts = torch.cat([depth_reshape * ix[None, :, None], depth_reshape * iy[:, None, None], depth_reshape], dim=-1)
         R = viewpoint_cam.R
         T = viewpoint_cam.T
-        pts = (pts - T) @ R.transpose(1, 0)
-        sampled_pkg = sample_depth(
-            pts,
-            nearest_cam,
-            gaussians,
-            self.pipe,
-            self.kernel_size,
-        )
+        pts = (pts - T) @ R.T
+        sampled_pkg = sample_depth(pts,nearest_cam,gaussians,self.pipe,self.kernel_size)
 
         pts_in_nearest_cam = sampled_pkg["sampled_depth"]
         d_mask = sampled_pkg["inside"]

@@ -1,0 +1,8 @@
+Output folder: /media/wangsc/T7/outputs/gs/dtu/ [16/06 10:46:17]
+Reading camera 49/49 [16/06 10:46:17]
+cameras extent: 1.903829026222229 [16/06 10:46:17]
+Loading Training Cameras: 49 . [16/06 10:46:22]
+Loading Test Cameras: 0 . [16/06 10:46:22]
+computing nearest_id [16/06 10:46:22]
+Number of points at initialisation :  11911 [16/06 10:46:22]
+Training progress:   0%|                                                                                                                        | 0/30000 [00:00<?, ?it/s]

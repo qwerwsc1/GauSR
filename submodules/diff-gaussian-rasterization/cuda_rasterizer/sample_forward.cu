@@ -147,7 +147,7 @@ __global__ void __launch_bounds__(BLOCK_X* BLOCK_Y)
                     // Avoid numerical instabilities (see paper appendix).
                     float4 ray_plane = collected_ray_planes[j];
                     float t          = ray_plane.x * d.x + ray_plane.y * d.y + ray_plane.z;
-                    float alpha      = fminf(0.99f, con_o.w * expf(power));
+                    float alpha      = fminf(0.99f, footprint_activation(con_o.w * expf(power)));
                     if (point_depth[p] < t) {
                         float delta_u = (t - point_depth[p]) * ray_plane.w;
                         float power   = -0.5f * (delta_u * delta_u);
