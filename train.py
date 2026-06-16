@@ -71,6 +71,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Pick a random Camera
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
+            if iteration > opt.geovalue_reset_interval and iteration < opt.densify_until_iter: # iteration % opt.geovalue_reset_interval > len(scene.getTrainCameras()):
+                gaussians.prune_unused()
+                gaussians.compute_adjacent_matrix()
         viewpoint_cam: Camera = viewpoint_stack.pop(randint(0, len(viewpoint_stack) - 1))
 
         # Render
@@ -199,6 +202,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                         scene.cameras_extent,
                         size_threshold,
                     )
+                    gaussians.compute_adjacent_matrix()
                     
                     if dataset.disable_filter3D:
                         gaussians.reset_3D_filter()
@@ -207,7 +211,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
                 if iteration < 15000 and (iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter)):
                     gaussians.reset_opacity(opt.geovalue_reset)
-
+            elif iteration >= opt.densify_until_iter and iteration % opt.densification_interval == 0:
+                gaussians.prune(opt.geovalue_post_cull)
+                gaussians.compute_adjacent_matrix() 
             if iteration % 100 == 0 and iteration > opt.densify_until_iter and not dataset.disable_filter3D:
                 if iteration < opt.iterations - 100:
                     # don't update in the end of training

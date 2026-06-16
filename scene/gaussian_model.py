@@ -32,6 +32,7 @@ from utils.general_utils import (
 from utils.graphics_utils import BasicPointCloud
 from utils.sh_utils import RGB2SH
 from utils.system_utils import mkdir_p
+from pytorch3d.ops.knn import knn_points
 
 
 class GaussianModel:
@@ -138,6 +139,14 @@ class GaussianModel:
             self.appearance_network = AppearanceNetwork(3 + 64, 3).cuda()
             self.appearance_network.load_state_dict(app_dict)
         self._appearance_embeddings = _appearance_embeddings
+
+    @torch.no_grad()
+    def compute_adjacent_matrix(self):
+        if not self.propagate_features:
+            return
+        xyz = self.get_xyz[None] # (1, N, 3)
+        self.adjacent_matrix = knn_points(xyz, xyz, K=self.K).idx[0]
+
 
     @property
     def get_scaling(self):
@@ -317,6 +326,8 @@ class GaussianModel:
         self._geovalue = nn.Parameter(geovalue.requires_grad_(True))
         # self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+
+        self.compute_adjacent_matrix()
 
     def training_setup(self, training_args: OptimizationParams) -> None:
         self._init_gradient_accumulators()
@@ -568,6 +579,7 @@ class GaussianModel:
         self.filter_3D = torch.tensor(filter_3D, dtype=torch.float, device="cuda")
 
         self.active_sh_degree = self.max_sh_degree
+        self.compute_adjacent_matrix()
 
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}
@@ -728,6 +740,29 @@ class GaussianModel:
 
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_geovalue, new_scaling, new_rotation)
 
+    def prune(self, min_geovalue, extent = None, max_screen_size = None):
+        prune_mask = (self.get_geovalue < min_geovalue).squeeze()
+        if max_screen_size:
+            big_points_vs = self.max_radii2D > max_screen_size
+            big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
+            small_points_ws = self.get_scaling.max(dim=1).values < 1e-3
+            prune_mask |= torch.logical_or(torch.logical_or(big_points_vs, big_points_ws), small_points_ws)
+        self.prune_points(prune_mask)
+        torch.cuda.empty_cache()
+    
+    def prune_by_weight(self, min_weight):
+        prune_mask = (self.max_weight < min_weight).squeeze()
+        # print(f'Prune {torch.sum(prune_mask).detach().item()}/{len(prune_mask)} Surfels that are not Opaque Enough.')
+        self.prune_points(prune_mask)
+        torch.cuda.empty_cache()
+        self.max_weight = torch.zeros_like(self.max_weight)
+
+    def prune_unused(self):
+        prune_mask = (self.count_accum <= 0).squeeze()
+        self.prune_points(prune_mask)
+        torch.cuda.empty_cache()
+        self.count_accum = torch.zeros_like(self.count_accum)
+
     # Use the same densification strategy as GOF:
     # https://github.com/autonomousvision/gaussian-opacity-fields
     def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size):
@@ -753,6 +788,7 @@ class GaussianModel:
         #     big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
         #     prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
         self.prune_points(prune_mask)
+        self.prune(min_opacity, extent, max_screen_size)
         prune = self._xyz.shape[0]
         return clone - before, split - clone, split - prune
 
