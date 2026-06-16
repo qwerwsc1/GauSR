@@ -205,8 +205,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     else:
                         gaussians.compute_3D_filter(cameras=trainCameras)
 
-                if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
-                    gaussians.reset_opacity()
+                if iteration < 15000 and (iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter)):
+                    gaussians.reset_opacity(opt.geovalue_reset)
 
             if iteration % 100 == 0 and iteration > opt.densify_until_iter and not dataset.disable_filter3D:
                 if iteration < opt.iterations - 100:
