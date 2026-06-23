@@ -11,7 +11,7 @@
 
 import os
 from enum import Enum
-from typing import Optional, Any
+from typing import Optional, Any, List, Dict
 
 import numpy as np
 import torch
@@ -318,7 +318,7 @@ class GaussianModel:
         self.xyz_gradient_accum_abs = torch.zeros((num_points, 1), device=device)
         self.denom = torch.zeros((num_points, 1), device=device)
 
-    def _build_base_param_groups(self, training_args: OptimizationParams) -> list[dict[str, Any]]:
+    def _build_base_param_groups(self, training_args: OptimizationParams) -> List[Dict[str, Any]]:
         self.xyz_scheduler_args = get_expon_lr_func(
             lr_init=training_args.position_lr_init * self.spatial_lr_scale,
             lr_final=training_args.position_lr_final * self.spatial_lr_scale,
@@ -335,7 +335,7 @@ class GaussianModel:
             {"params": [self._rotation], "lr": training_args.rotation_lr, "name": "rotation"},
         ]
 
-    def _build_appearance_param_groups(self, training_args: OptimizationParams) -> list[dict[str, Any]]:
+    def _build_appearance_param_groups(self, training_args: OptimizationParams) -> List[Dict[str, Any]]:
         dispatch = {
             self.App_model.GS: self._gs_param_groups,
             self.App_model.GOF: self._gof_param_groups,
@@ -349,7 +349,7 @@ class GaussianModel:
         return builder(training_args)
 
 
-    def _gs_param_groups(self, training_args: OptimizationParams) -> list[dict[str, Any]]:
+    def _gs_param_groups(self, training_args: OptimizationParams) -> List[Dict[str, Any]]:
         self.exposure_scheduler_args = get_expon_lr_func(
             training_args.gs_appearance_lr_init,
             training_args.gs_appearance_lr_final,
@@ -365,7 +365,7 @@ class GaussianModel:
             }
         ]
 
-    def _gof_param_groups(self, training_args: OptimizationParams) -> list[dict[str, Any]]:
+    def _gof_param_groups(self, training_args: OptimizationParams) -> List[Dict[str, Any]]:
         if self.appearance_network is None:
             raise RuntimeError("appearance_network must be initialized before calling training_setup")
         return [
@@ -381,7 +381,7 @@ class GaussianModel:
             },
         ]
 
-    def _pgsr_param_groups(self, training_args: OptimizationParams) -> list[dict[str, Any]]:
+    def _pgsr_param_groups(self, training_args: OptimizationParams) -> List[Dict[str, Any]]:
         return [
             {
                 "params": [self._appearance_embeddings],
@@ -391,7 +391,7 @@ class GaussianModel:
             }
         ]
 
-    def _noop_param_groups(self, training_args: OptimizationParams) -> list[dict[str, Any]]:
+    def _noop_param_groups(self, training_args: OptimizationParams) -> List[Dict[str, Any]]:
         return []
 
 
