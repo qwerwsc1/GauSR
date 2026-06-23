@@ -28,7 +28,7 @@ class Scene:
 
     gaussians: GaussianModel
 
-    def __init__(self, args: ModelParams, gaussians: GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0], geovalue_init=None):
+    def __init__(self, args: ModelParams, gaussians: GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
         """b
         :param path: Path to colmap scene main folder.
         """
@@ -124,7 +124,7 @@ class Scene:
         if self.loaded_iter:
             self.gaussians.load_ply(os.path.join(self.model_path, "point_cloud", "iteration_" + str(self.loaded_iter), "point_cloud.ply"))
         else:
-            self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent, geovalue_init)
+            self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
             with torch.no_grad():
                 for camera_center in camera_centers_list:
                     dists_cam_gauss = torch.norm(self.gaussians.get_xyz - camera_center[None, :], dim=1)
