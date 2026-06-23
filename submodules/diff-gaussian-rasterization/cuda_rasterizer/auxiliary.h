@@ -34,42 +34,45 @@ __device__ const float SH_C3[] = {
     1.445305721320277f,
     -0.5900435899266435f};
 
-#define FOOTPRINT_DISTRIBUTION 0 // 0 - Gaussian, 1 - Laplace, 2 - Logistic
+#define FOOTPRINT_DISTRIBUTION 0 // 0 - Gaussian with self-occlusion // Gaussian, 1 - Laplace, 2 - Logistic
 
 // Fused function from Eqn. (7) and Eqn. (15) in the Geometry Field Splatting paper.
 __forceinline__ __device__ float footprint_activation(float x) {
 	// Enforce a maximum of x such that the maximum of activated value is 0.99.
 #if FOOTPRINT_DISTRIBUTION == 0
-	if (x >= 4.2815f) return 0.99f;
-	else if (x >= 0.f) return 1.f - exp(-0.03279f * powf(x, 3.4f));
-	else return 0.f;
-#elif FOOTPRINT_DISTRIBUTION == 1
-	x = min(x, 7.6094f);
-	float tmp = 1.f + sgnf(6.f - x) * (1.f - exp(-fabs(6.f - x)));
-	return 1.f - 0.25f * tmp * tmp;
-#elif FOOTPRINT_DISTRIBUTION == 2
-	x = min(x, 9.1972f);
-	float tmp = 1.f + tanh(3.5f - 0.5f * x);
-	return 1.f - 0.25f * tmp * tmp;
+    return x;
+// 	if (x >= 4.2815f) return 0.99f;
+// 	else if (x >= 0.f) return 1.f - exp(-0.03279f * powf(x, 3.4f));
+// 	else return 0.f;
+// #elif FOOTPRINT_DISTRIBUTION == 1
+// 	x = min(x, 7.6094f);
+// 	float tmp = 1.f + sgnf(6.f - x) * (1.f - exp(-fabs(6.f - x)));
+// 	return 1.f - 0.25f * tmp * tmp;
+// #elif FOOTPRINT_DISTRIBUTION == 2
+// 	x = min(x, 9.1972f);
+// 	float tmp = 1.f + tanh(3.5f - 0.5f * x);
+// 	return 1.f - 0.25f * tmp * tmp;
 #endif
 }
 
 __forceinline__ __device__ float dfootprint_activation(float x) {
 	// Enforce a maximum of x such that the maximum of activated value is 0.99.
 #if FOOTPRINT_DISTRIBUTION == 0
-	if (x >= 4.2815f) return 0.f;
-	else if (x >= 0.f) return 0.111486f * powf(x, 2.4f) * exp(-0.03279f * powf(x, 3.4f));
-	else return 0.f;
-#elif FOOTPRINT_DISTRIBUTION == 1
-	x = min(x, 7.6094f);
-	float _x = 6.f - x;
-	float tmp = 1.f + sgnf(_x) * (1.f - exp(-fabs(_x)));
-	return 0.5f * tmp * exp(-fabs(_x));
-#elif FOOTPRINT_DISTRIBUTION == 2
-	x = min(x, 9.1972f);
-	float _x = 3.5f - 0.5f * x;
-	float tmp = 1.f + tanh(_x);
-	return 0.25f * tmp * (1.f - tanh(_x) * tanh(_x));
+    return 1.f;
+
+// 	if (x >= 4.2815f) return 0.f;
+// 	else if (x >= 0.f) return 0.111486f * powf(x, 2.4f) * exp(-0.03279f * powf(x, 3.4f));
+// 	else return 0.f;
+// #elif FOOTPRINT_DISTRIBUTION == 1
+// 	x = min(x, 7.6094f);
+// 	float _x = 6.f - x;
+// 	float tmp = 1.f + sgnf(_x) * (1.f - exp(-fabs(_x)));
+// 	return 0.5f * tmp * exp(-fabs(_x));
+// #elif FOOTPRINT_DISTRIBUTION == 2
+// 	x = min(x, 9.1972f);
+// 	float _x = 3.5f - 0.5f * x;
+// 	float tmp = 1.f + tanh(_x);
+// 	return 0.25f * tmp * (1.f - tanh(_x) * tanh(_x));
 #endif
 }
 
