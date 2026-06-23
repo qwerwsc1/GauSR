@@ -32,7 +32,6 @@ from utils.general_utils import (
 from utils.graphics_utils import BasicPointCloud
 from utils.sh_utils import RGB2SH
 from utils.system_utils import mkdir_p
-from pytorch3d.ops.knn import knn_points
 
 
 class GaussianModel:
@@ -60,16 +59,9 @@ class GaussianModel:
 
         self.rotation_activation = torch.nn.functional.normalize
 
-        self.geovalue_activation = lambda x: self.geovalue_mul * torch.sigmoid(x) # torch.log(1 + torch.clamp_min(x, 0))
-        self.inverse_geovalue_activation = lambda y: inverse_sigmoid(y / self.geovalue_mul) # torch.exp(y / self.geovalue_mul) - 1
-
-    def __init__(self, dataset):
+    def __init__(self, sh_degree: int):
         self.active_sh_degree = 0
-        self.max_sh_degree = dataset.sh_degree
-
-        self.geovalue_mul = 5.0
-        self._geovalue = torch.empty(0)
-
+        self.max_sh_degree = sh_degree
         self._xyz = torch.empty(0)
         self._features_dc = torch.empty(0)
         self._features_rest = torch.empty(0)
@@ -82,12 +74,6 @@ class GaussianModel:
         self.optimizer: Optional[torch.optim.Optimizer] = None
         self.percent_dense = 0.0
         self.spatial_lr_scale = 0.0
-
-        self.K = dataset.K
-        self.adjacent_matrix = None
-        self.propagate_features = not dataset.not_propagate_features
-        self.distance_coefficient = dataset.distance_coefficient
-
         self.setup_functions()
         self.appearance_network: Optional[AppearanceNetwork] = None
         self._appearance_embeddings: Optional[torch.nn.Parameter] = None
@@ -99,8 +85,6 @@ class GaussianModel:
             app_model_param = None
         return (
             self.active_sh_degree,
-
-            self._geovalue,
             self._xyz,
             self._features_dc,
             self._features_rest,
@@ -120,8 +104,6 @@ class GaussianModel:
     def restore(self, model_args, training_args):
         (
             self.active_sh_degree,
-
-            self._geovalue,
             self._xyz,
             self._features_dc,
             self._features_rest,
@@ -146,14 +128,6 @@ class GaussianModel:
             self.appearance_network.load_state_dict(app_dict)
         self._appearance_embeddings = _appearance_embeddings
 
-    @torch.no_grad()
-    def compute_adjacent_matrix(self):
-        if not self.propagate_features:
-            return
-        xyz = self.get_xyz[None] # (1, N, 3)
-        self.adjacent_matrix = knn_points(xyz, xyz, K=self.K).idx[0]
-
-
     @property
     def get_scaling(self):
         return self.scaling_activation(self._scaling)
@@ -177,29 +151,15 @@ class GaussianModel:
     def get_features(self):
         features_dc = self._features_dc
         features_rest = self._features_rest
-        features = torch.cat((features_dc, features_rest), dim=1)
-        if self.propagate_features:
-            assert self.adjacent_matrix is not None
-            assert len(self.adjacent_matrix) == len(self.get_xyz)
-            xyz = self.get_xyz[:, None, :]  # (N, 1, 3)
-            neighbor_xyz = self.get_xyz[self.adjacent_matrix, :] # (N, K, 3)
-            self._weights = torch.nn.functional.normalize((1 - torch.exp(-self.get_geovalue)) * torch.exp(-torch.norm(xyz - neighbor_xyz, dim=-1, p=2) * self.distance_coefficient), dim=-1, p=1) # (N, K)
-            # self._weights = torch.nn.functional.normalize(footprint_activations[FOOTPRINT_DISTRIBUTION](self.get_geovalue) * torch.exp(-torch.norm(xyz - neighbor_xyz, dim=-1, p=2) * self.distance_coefficient), dim=-1, p=1) # (N, K)
-            neighbor_features = features[self.adjacent_matrix, :, :] # (N, K, F, 3)
-            return (self._weights[:, :, None, None] * neighbor_features).sum(dim=1)
+        return torch.cat((features_dc, features_rest), dim=1)
 
-    @property
-    def get_geovalue(self):
-        return self.geovalue_activation(self._geovalue)
-    
     @property
     def get_opacity(self):
         return self.opacity_activation(self._opacity)
 
     @property
     def get_opacity_with_3D_filter(self):
-        opacity = self.geovalue_activation(self._geovalue)
-        # opacity = self.opacity_activation(self._opacity)
+        opacity = self.opacity_activation(self._opacity)
         # apply 3D filter
         scales = self.get_scaling
 
@@ -213,10 +173,7 @@ class GaussianModel:
 
     @property
     def get_scaling_n_opacity_with_3D_filter(self):
-
-        opacity = self.geovalue_activation(self._geovalue)
-
-        #opacity = self.opacity_activation(self._opacity)
+        opacity = self.opacity_activation(self._opacity)
         scales = self.get_scaling
         scales_square = torch.square(scales)
         det1 = scales_square.prod(dim=1)
@@ -311,7 +268,7 @@ class GaussianModel:
         self._appearance_embeddings = None
         self.appearance_network = None
 
-    def create_from_pcd(self, pcd, spatial_lr_scale: float, init_geovalue : float):
+    def create_from_pcd(self, pcd, spatial_lr_scale: float):
         self.spatial_lr_scale = spatial_lr_scale
         if isinstance(pcd, BasicPointCloud):
             fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
@@ -330,19 +287,15 @@ class GaussianModel:
         rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
         rots[:, 0] = 1
 
-        # opacities = inverse_sigmoid(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
+        opacities = inverse_sigmoid(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
 
-        geovalue = self.inverse_geovalue_activation(init_geovalue * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))  
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:, :, 0:1].transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(features[:, :, 1:].transpose(1, 2).contiguous().requires_grad_(True))
         self._scaling = nn.Parameter(scales.requires_grad_(True))
         self._rotation = nn.Parameter(rots.requires_grad_(True))
-        self._geovalue = nn.Parameter(geovalue.requires_grad_(True))
-        # self._opacity = nn.Parameter(opacities.requires_grad_(True))
+        self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
-
-        self.compute_adjacent_matrix()
 
     def training_setup(self, training_args: OptimizationParams) -> None:
         self._init_gradient_accumulators()
@@ -372,17 +325,12 @@ class GaussianModel:
             lr_delay_mult=training_args.position_lr_delay_mult,
             max_steps=training_args.position_lr_max_steps,
         )
-        self.geovalue_scheduler_args = get_expon_lr_func(lr_init=training_args.geovalue_lr_init, 
-                                                         lr_final=training_args.geovalue_lr_final, 
-                                                         max_steps=training_args.geovalue_lr_max_steps)
-        
         spatial_lr = training_args.position_lr_init * self.spatial_lr_scale
         return [
             {"params": [self._xyz], "lr": spatial_lr, "name": "xyz"},
             {"params": [self._features_dc], "lr": training_args.feature_lr, "name": "f_dc"},
             {"params": [self._features_rest], "lr": training_args.feature_lr / 20.0, "name": "f_rest"},
-            # {"params": [self._opacity], "lr": training_args.opacity_lr, "name": "opacity"},
-            {'params': [self._geovalue], 'lr': training_args.geovalue_lr_init, "name": "geovalue"},
+            {"params": [self._opacity], "lr": training_args.opacity_lr, "name": "opacity"},
             {"params": [self._scaling], "lr": training_args.scaling_lr, "name": "scaling"},
             {"params": [self._rotation], "lr": training_args.rotation_lr, "name": "rotation"},
         ]
@@ -453,11 +401,8 @@ class GaussianModel:
             if param_group["name"] == "xyz":
                 lr = self.xyz_scheduler_args(iteration)
                 param_group["lr"] = lr
-            elif param_group["name"] == "appearance_embeddings" and self.app_model == self.App_model.GS:
+            if param_group["name"] == "appearance_embeddings" and self.app_model == self.App_model.GS:
                 param_group["lr"] = self.exposure_scheduler_args(iteration)
-            elif param_group["name"] == "geovalue":
-                lr = self.geovalue_scheduler_args(iteration)
-                param_group['lr'] = lr
 
     def construct_list_of_attributes(self, exclude_filter=False):
         l = ["x", "y", "z", "nx", "ny", "nz"]
@@ -466,8 +411,7 @@ class GaussianModel:
             l.append("f_dc_{}".format(i))
         for i in range(self._features_rest.shape[1] * self._features_rest.shape[2]):
             l.append("f_rest_{}".format(i))
-        # l.append("opacity")
-        l.append("geovalue")
+        l.append("opacity")
         for i in range(self._scaling.shape[1]):
             l.append("scale_{}".format(i))
         for i in range(self._rotation.shape[1]):
@@ -483,8 +427,7 @@ class GaussianModel:
         normals = np.zeros_like(xyz)
         f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
         f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        # opacities = self._opacity.detach().cpu().numpy()
-        geovalue = self._geovalue.detach().cpu().numpy()
+        opacities = self._opacity.detach().cpu().numpy()
         scale = self._scaling.detach().cpu().numpy()
         rotation = self._rotation.detach().cpu().numpy()
 
@@ -492,8 +435,7 @@ class GaussianModel:
         dtype_full = [(attribute, "f4") for attribute in self.construct_list_of_attributes()]
 
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
-        # attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation, filter_3D), axis=1)
-        attributes = np.concatenate((xyz, normals, f_dc, f_rest, geovalue, scale, rotation, filter_3D), axis=1)
+        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation, filter_3D), axis=1)
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, "vertex")
         PlyData([el]).write(path)
@@ -522,7 +464,7 @@ class GaussianModel:
         vertices_scale = torch.cat([scale_corner, scale], dim=0)
         return vertices, vertices_scale
 
-    def reset_opacity(self, value):
+    def reset_opacity(self):
         # reset opacity to by considering 3D filter
         current_opacity_with_filter = self.get_opacity_with_3D_filter
         opacities_new = torch.min(current_opacity_with_filter, torch.ones_like(current_opacity_with_filter) * 0.01)
@@ -537,20 +479,16 @@ class GaussianModel:
         det2 = scales_after_square.prod(dim=1)
         coef = torch.sqrt(det1 / det2)
         opacities_new = opacities_new / coef[..., None]
-        geovalue_new = self.inverse_geovalue_activation(torch.min(opacities_new, torch.ones_like(opacities_new)*value))
-        # opacities_new = self.inverse_opacity_activation(opacities_new)
+        opacities_new = self.inverse_opacity_activation(opacities_new)
 
-        optimizable_tensors = self.replace_tensor_to_optimizer(geovalue_new, "geovalue")
-        self._geovalue = optimizable_tensors["geovalue"]
-        # optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
-        # self._opacity = optimizable_tensors["opacity"]
+        optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
+        self._opacity = optimizable_tensors["opacity"]
 
     def load_ply(self, path):
         plydata = PlyData.read(path)
 
         xyz = np.stack((np.asarray(plydata.elements[0]["x"]), np.asarray(plydata.elements[0]["y"]), np.asarray(plydata.elements[0]["z"])), axis=1)
-        # opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
-        geovalue = np.asarray(plydata.elements[0]["geovalue"])[..., np.newaxis]
+        opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
 
         filter_3D = np.asarray(plydata.elements[0]["filter_3D"])[..., np.newaxis]
 
@@ -587,14 +525,12 @@ class GaussianModel:
         self._features_rest = nn.Parameter(
             torch.tensor(features_extra, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True)
         )
-        self._geovalue = nn.Parameter(torch.tensor(geovalue, dtype=torch.float, device="cuda").requires_grad_(True))
-        # self._opacity = nn.Parameter(torch.tensor(opacities, dtype=torch.float, device="cuda").requires_grad_(True))
+        self._opacity = nn.Parameter(torch.tensor(opacities, dtype=torch.float, device="cuda").requires_grad_(True))
         self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda").requires_grad_(True))
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
         self.filter_3D = torch.tensor(filter_3D, dtype=torch.float, device="cuda")
 
         self.active_sh_degree = self.max_sh_degree
-        self.compute_adjacent_matrix()
 
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}
@@ -640,8 +576,7 @@ class GaussianModel:
         self._xyz = optimizable_tensors["xyz"]
         self._features_dc = optimizable_tensors["f_dc"]
         self._features_rest = optimizable_tensors["f_rest"]
-        self._geovalue = optimizable_tensors["geovalue"]
-        # self._opacity = optimizable_tensors["opacity"]
+        self._opacity = optimizable_tensors["opacity"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
 
@@ -674,13 +609,12 @@ class GaussianModel:
 
         return optimizable_tensors
 
-    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_geovalue, new_scaling, new_rotation):
+    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation):
         d = {
             "xyz": new_xyz,
             "f_dc": new_features_dc,
             "f_rest": new_features_rest,
-            "geovalue": new_geovalue,
-            # "opacity": new_opacities,
+            "opacity": new_opacities,
             "scaling": new_scaling,
             "rotation": new_rotation,
         }
@@ -689,8 +623,7 @@ class GaussianModel:
         self._xyz = optimizable_tensors["xyz"]
         self._features_dc = optimizable_tensors["f_dc"]
         self._features_rest = optimizable_tensors["f_rest"]
-        # self._opacity = optimizable_tensors["opacity"]
-        self._geovalue = optimizable_tensors["geovalue"]
+        self._opacity = optimizable_tensors["opacity"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
 
@@ -722,10 +655,9 @@ class GaussianModel:
         new_rotation = self._rotation[selected_pts_mask].repeat(N, 1)
         new_features_dc = self._features_dc[selected_pts_mask].repeat(N, 1, 1)
         new_features_rest = self._features_rest[selected_pts_mask].repeat(N, 1, 1)
-        # new_opacities = self._opacity[selected_pts_mask].repeat(N,1)
-        new_geovalue = self._geovalue[selected_pts_mask].repeat(N,1)
+        new_opacities = self._opacity[selected_pts_mask].repeat(N,1)
         # new_opacities = (self.inverse_opacity_activation(self.get_opacity[selected_pts_mask] * 0.5)).repeat(N, 1)
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_geovalue, new_scaling, new_rotation)
+        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation)
 
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
         self.prune_points(prune_filter)
@@ -747,36 +679,12 @@ class GaussianModel:
 
         new_features_dc = self._features_dc[selected_pts_mask]
         new_features_rest = self._features_rest[selected_pts_mask]
-        # new_opacities = self._opacity[selected_pts_mask]
-        new_geovalue = self._geovalue[selected_pts_mask]
+        new_opacities = self._opacity[selected_pts_mask]
         # new_opacities = self.inverse_opacity_activation(self.get_opacity[selected_pts_mask] * 0.5)
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
 
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_geovalue, new_scaling, new_rotation)
-
-    def prune(self, min_geovalue, extent = None, max_screen_size = None):
-        prune_mask = (self.get_geovalue < min_geovalue).squeeze()
-        if max_screen_size:
-            big_points_vs = self.max_radii2D > max_screen_size
-            big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
-            small_points_ws = self.get_scaling.max(dim=1).values < 1e-3
-            prune_mask |= torch.logical_or(torch.logical_or(big_points_vs, big_points_ws), small_points_ws)
-        self.prune_points(prune_mask)
-        torch.cuda.empty_cache()
-    
-    def prune_by_weight(self, min_weight):
-        prune_mask = (self.max_weight < min_weight).squeeze()
-        # print(f'Prune {torch.sum(prune_mask).detach().item()}/{len(prune_mask)} Surfels that are not Opaque Enough.')
-        self.prune_points(prune_mask)
-        torch.cuda.empty_cache()
-        self.max_weight = torch.zeros_like(self.max_weight)
-
-    def prune_unused(self):
-        prune_mask = (self.count_accum <= 0).squeeze()
-        self.prune_points(prune_mask)
-        torch.cuda.empty_cache()
-        self.count_accum = torch.zeros_like(self.count_accum)
+        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation)
 
     # Use the same densification strategy as GOF:
     # https://github.com/autonomousvision/gaussian-opacity-fields
@@ -796,14 +704,12 @@ class GaussianModel:
         self.densify_and_split(grads, max_grad, grads_abs, Q, extent)
         split = self._xyz.shape[0]
 
-        # prune_mask = (self.get_opacity < min_opacity).squeeze()
-        prune_mask = (self.get_geovalue < min_opacity).squeeze()
+        prune_mask = (self.get_opacity < min_opacity).squeeze()
         # if max_screen_size:
         #     big_points_vs = self.max_radii2D > max_screen_size
         #     big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
         #     prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
         self.prune_points(prune_mask)
-        self.prune(min_opacity, extent, max_screen_size)
         prune = self._xyz.shape[0]
         return clone - before, split - clone, split - prune
 

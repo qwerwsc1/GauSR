@@ -33,8 +33,8 @@ os.environ.setdefault("WANDB_SILENT", "true")
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, use_wandb = False):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset)
-    scene = Scene(dataset, gaussians, geovalue_init=opt.geovalue_init)
+    gaussians = GaussianModel(dataset.sh_degree)
+    scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
@@ -71,9 +71,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Pick a random Camera
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
-            if iteration > opt.geovalue_reset_interval and iteration < opt.densify_until_iter: # iteration % opt.geovalue_reset_interval > len(scene.getTrainCameras()):
-                gaussians.prune_unused()
-                gaussians.compute_adjacent_matrix()
         viewpoint_cam: Camera = viewpoint_stack.pop(randint(0, len(viewpoint_stack) - 1))
 
         # Render
@@ -126,16 +123,16 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         #     rend_depth = render_pkg['expected_depth']
         #     rend_depth_normal = depth_to_normal(viewpoint_cam, rend_depth)
         #     rend_normal = torch.nn.functional.normalize(render_pkg['normal'], dim=0)
-        
+        #
         #     gt_show = (rend_gt.permute(1, 2, 0).clamp(0,1)[:,:,[2,1,0]]*255).detach().cpu().numpy().astype(np.uint8)
         #     rend_img_show = (rend_image.permute(1, 2, 0).clamp(0,1)[:,:,[2,1,0]]*255).detach().cpu().numpy().astype(np.uint8)
         #     depth_magma_show = visualize_depth_magma(rend_depth.detach().permute(1, 2, 0).squeeze())
         #     normal_show = ((rend_normal * 0.5 + 0.5).clamp(0,1) * 255).permute(1, 2, 0).detach().cpu().numpy().astype(np.uint8)
         #     depth_normal_show = ((rend_depth_normal * 0.5 + 0.5).clamp(0, 1) * 255).permute(1, 2, 0).detach().cpu().numpy().astype(np.uint8)
-        
+        #
         #     row0 = np.concatenate([gt_show, rend_img_show, depth_magma_show, depth_normal_show, normal_show], axis=1)
         #     image_to_show = np.concatenate([row0], axis=0)
-        
+        #
         #     debug_path = os.path.join(scene.model_path, "debug")
         #     os.makedirs(debug_path, exist_ok=True)
         #     cv2.imwrite(os.path.join(debug_path, "%05d"%iteration + "_" + viewpoint_cam.image_name + ".png"), image_to_show)
@@ -202,18 +199,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                         scene.cameras_extent,
                         size_threshold,
                     )
-                    gaussians.compute_adjacent_matrix()
-
+                    
                     if dataset.disable_filter3D:
                         gaussians.reset_3D_filter()
                     else:
                         gaussians.compute_3D_filter(cameras=trainCameras)
 
-                if iteration < 15000 and (iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter)):
-                    gaussians.reset_opacity(opt.geovalue_reset)
-            elif iteration >= opt.densify_until_iter and iteration % opt.densification_interval == 0:
-                gaussians.prune(opt.geovalue_post_cull)
-                gaussians.compute_adjacent_matrix() 
+                if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
+                    gaussians.reset_opacity()
+
             if iteration % 100 == 0 and iteration > opt.densify_until_iter and not dataset.disable_filter3D:
                 if iteration < opt.iterations - 100:
                     # don't update in the end of training
@@ -353,7 +347,7 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[15000])
     parser.add_argument("--start_checkpoint", type=str, default=None)
     # additional argument for using wandb
-    parser.add_argument("--use_wandb", action='store_true', default=True, help="Use wandb to record loss value")
+    parser.add_argument("--use_wandb", action='store_true', default=False, help="Use wandb to record loss value")
     parser.add_argument("--wandb_project", type=str, default="GauSR", help="Wandb project name")
     parser.add_argument("--wandb_entity", type=str, default="scwaang-", help="Wandb entity/team name")
     parser.add_argument("--run_name", type=str, default="tnt", help="Wandb run name")
