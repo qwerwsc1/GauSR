@@ -1,6 +1,6 @@
 ulimit -n 4096
 dataset_folder=/home/wangsc/Documents/datasets/tnt_dataset/
-output_folder=/media/data/SurR/outputs/gausr/tnt
+output_folder=/media/data/SurR/outputs/gausr/tnt-wo-assumption
 scenes=(Barn Caterpillar Ignatius Meetingroom Truck Courthouse)
 devices=(cuda cuda cuda cuda cuda cuda)
 
