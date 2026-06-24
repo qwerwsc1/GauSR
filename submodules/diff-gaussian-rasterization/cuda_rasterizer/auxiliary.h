@@ -34,13 +34,15 @@ __device__ const float SH_C3[] = {
     1.445305721320277f,
     -0.5900435899266435f};
 
-#define FOOTPRINT_DISTRIBUTION 0 // 0 - Gaussian with self-occlusion // Gaussian, 1 - Laplace, 2 - Logistic
+#define FOOTPRINT_DISTRIBUTION 1 // 0 - Gaussian with self-occlusion // Gaussian, 1 - Laplace, 2 - Logistic
 
 // Fused function from Eqn. (7) and Eqn. (15) in the Geometry Field Splatting paper.
 __forceinline__ __device__ float footprint_activation(float x) {
 	// Enforce a maximum of x such that the maximum of activated value is 0.99.
 #if FOOTPRINT_DISTRIBUTION == 0
     return x;
+#elif FOOTPRINT_DISTRIBUTION == 1
+    return 1.f - expf(-x);
 // 	if (x >= 4.2815f) return 0.99f;
 // 	else if (x >= 0.f) return 1.f - exp(-0.03279f * powf(x, 3.4f));
 // 	else return 0.f;
@@ -59,7 +61,8 @@ __forceinline__ __device__ float dfootprint_activation(float x) {
 	// Enforce a maximum of x such that the maximum of activated value is 0.99.
 #if FOOTPRINT_DISTRIBUTION == 0
     return 1.f;
-
+#elif FOOTPRINT_DISTRIBUTION == 1
+    return expf(-x);
 // 	if (x >= 4.2815f) return 0.f;
 // 	else if (x >= 0.f) return 0.111486f * powf(x, 2.4f) * exp(-0.03279f * powf(x, 3.4f));
 // 	else return 0.f;
