@@ -41,7 +41,6 @@ struct RichPoint
 	float opacity;
 	Scale scale;
 	Rot rot;
-	float filter;
 };
 
 float sigmoid(const float m1)
@@ -159,21 +158,12 @@ int loadPly(const char* filename,
 		for (int j = 0; j < 4; j++)
 			rot[k].rot[j] = points[i].rot.rot[j] / length;
 
-		float det1 = 1;
-		float det2 = 1;
 		// Exponentiate scale
 		for(int j = 0; j < 3; j++)
-		{
-			float scale_component = exp(points[i].scale.scale[j]);
-			float filtered_scale = sqrt(scale_component*scale_component + points[i].filter*points[i].filter);
-			det1 *= scale_component*scale_component;
-			det2 *= scale_component*scale_component + points[i].filter*points[i].filter;
-			scales[k].scale[j] = filtered_scale;
-		}
-		float coef = sqrt(det1/det2);
+			scales[k].scale[j] = exp(points[i].scale.scale[j]);
 
 		// Activate alpha
-		opacities[k] = sigmoid(points[i].opacity) * coef;
+		opacities[k] = sigmoid(points[i].opacity);
 
 		shs[k].shs[0] = points[i].shs.shs[0];
 		shs[k].shs[1] = points[i].shs.shs[1];
@@ -365,12 +355,6 @@ sibr::GaussianView::GaussianView(const sibr::BasicIBRScene::Ptr & ibrScene, uint
 	_scene->cameras()->debugFlagCameraAsUsed(imgs_ulr);
 
 	// Load the PLY data (AoS) to the GPU (SoA)
-	// std::vector<std::vector<Pos>> pos;
-	// std::vector<std::vector<Rot>> rot;
-	// std::vector<std::vector<Scale>> scale;
-	// std::vector<std::vector<float>> opacity;
-	// std::vector<std::vector<SHs<3>>> shs;
-	std::cout<< file <<std::endl;
 	std::vector<Pos> pos;
 	std::vector<Rot> rot;
 	std::vector<Scale> scale;
@@ -409,7 +393,6 @@ sibr::GaussianView::GaussianView(const sibr::BasicIBRScene::Ptr & ibrScene, uint
 	CUDA_SAFE_CALL_ALWAYS(cudaMemcpy(opacity_cuda, opacity.data(), sizeof(float) * P, cudaMemcpyHostToDevice));
 	CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&scale_cuda, sizeof(Scale) * P));
 	CUDA_SAFE_CALL_ALWAYS(cudaMemcpy(scale_cuda, scale.data(), sizeof(Scale) * P, cudaMemcpyHostToDevice));
-	CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&mask_cuda, sizeof(float) * render_w * render_h));
 
 	// Create space for view parameters
 	CUDA_SAFE_CALL_ALWAYS(cudaMalloc((void**)&view_cuda, sizeof(sibr::Matrix4f)));
@@ -512,8 +495,7 @@ void sibr::GaussianView::onRenderIBR(sibr::IRenderTarget & dst, const sibr::Came
 		}
 
 		// Rasterize
-		// int* rects = _fastCulling ? rect_cuda : nullptr;
-		int* rects = nullptr;
+		int* rects = _fastCulling ? rect_cuda : nullptr;
 		float* boxmin = _cropping ? (float*)&_boxmin : nullptr;
 		float* boxmax = _cropping ? (float*)&_boxmax : nullptr;
 		CudaRasterizer::Rasterizer::forward(
@@ -524,28 +506,26 @@ void sibr::GaussianView::onRenderIBR(sibr::IRenderTarget & dst, const sibr::Came
 			background_cuda,
 			_resolution.x(), _resolution.y(),
 			pos_cuda,
+			shs_cuda,
 			nullptr,
 			opacity_cuda,
 			scale_cuda,
+			_scalingModifier,
 			rot_cuda,
 			nullptr,
-			shs_cuda,
-			_scalingModifier,
 			view_cuda,
 			proj_cuda,
 			cam_pos_cuda,
 			tan_fovx,
 			tan_fovy,
-			0,
 			false,
 			image_cuda,
+			_antialiasing,
 			nullptr,
-			nullptr,
-			mask_cuda,
-			nullptr,
-			nullptr,
-			false,
-			false);
+			rects,
+			boxmin,
+			boxmax
+		);
 
 		if (!_interop_failed)
 		{
@@ -593,6 +573,7 @@ void sibr::GaussianView::onGUI()
 		ImGui::SliderFloat("Scaling Modifier", &_scalingModifier, 0.001f, 1.0f);
 	}
 	ImGui::Checkbox("Fast culling", &_fastCulling);
+	ImGui::Checkbox("Antialiasing", &_antialiasing);
 
 	ImGui::Checkbox("Crop Box", &_cropping);
 	if (_cropping)

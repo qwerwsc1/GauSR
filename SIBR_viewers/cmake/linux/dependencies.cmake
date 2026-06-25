@@ -48,7 +48,7 @@ if (MSVC11 OR MSVC12)
             CHECK_CACHED_VAR GLEW_INCLUDE_DIR	    PATH "glew-1.10.0/include" DOC "default empty doc"
             CHECK_CACHED_VAR GLEW_LIBRARIES         STRING LIST "debug;glew-1.10.0/${LIB_BUILT_DIR}/glew32d.lib;optimized;glew-1.10.0/${LIB_BUILT_DIR}/glew32.lib" DOC "default empty doc"
         )
-elseif (MSVC14)
+elseif (MSVC14 OR MSVC17)
     set(glew_multiset_arguments 
             CHECK_CACHED_VAR GLEW_INCLUDE_DIR	    PATH "glew-2.0.0/include" DOC "default empty doc"
             CHECK_CACHED_VAR GLEW_SHARED_LIBRARY_RELEASE       PATH "glew-2.0.0/${LIB_BUILT_DIR}/glew32.lib"
@@ -81,7 +81,7 @@ if (MSVC11 OR MSVC12)
     set(assimp_set_arguments 
         CHECK_CACHED_VAR ASSIMP_DIR PATH "Assimp_3.1_fix"
     )
-elseif (MSVC14)
+elseif (MSVC14 OR MSVC17)
     set(assimp_set_arguments 
         CHECK_CACHED_VAR ASSIMP_DIR PATH "Assimp-4.1.0"
     )
@@ -117,13 +117,14 @@ include_directories(${FFMPEG_INCLUDE_DIR})
 ## Find embree3
 ###################
 sibr_addlibrary(
-    NAME embree
+    NAME embree3
     MSVC11 "https://repo-sam.inria.fr/fungraph/dependencies/ibr-common/win3rdParty-MSVC11-splitted%20version/embree2.7.0.x64.windows.7z"
     MSVC14 "https://repo-sam.inria.fr/fungraph/dependencies/ibr-common/win3rdParty-MSVC15-splitted%20version/embree-3.6.1.x64.vc14.windows.7z"     # TODO SV: provide a valid version if required
 )
 
 # CLUSTER
-find_package(embree 4.0 )
+#find_package(embree 3.0 REQUIRED PATHS "/data/graphdeco/share/embree/usr/local/lib64/cmake/" )
+find_package(embree 3.0 )
 
 ###################
 ## Find eigen3
@@ -154,7 +155,7 @@ if (WIN32)
                 #CHECK_CACHED_VAR Boost_COMPILER             STRING "-${Boost_WIN3RDPARTY_VCID}" DOC "vcid (eg: -vc110 for MSVC11)"
                 CHECK_CACHED_VAR Boost_COMPILER             STRING "-vc110" DOC "vcid (eg: -vc110 for MSVC11)" # NOTE: if it doesnt work, uncomment this option and set the right value for VisualC id
             )
-    elseif (MSVC14)
+    elseif (MSVC14 OR MSVC17)
         set(boost_multiset_arguments 
                 CHECK_CACHED_VAR BOOST_ROOT                 PATH "boost-1.71"
                 CHECK_CACHED_VAR BOOST_INCLUDEDIR 		    PATH "boost-1.71"
@@ -186,7 +187,7 @@ if (WIN32)
     endif()
 endif()
 
-find_package(Boost REQUIRED CONFIG COMPONENTS ${Boost_REQUIRED_COMPONENTS})
+find_package(Boost 1.65.0 REQUIRED COMPONENTS ${Boost_REQUIRED_COMPONENTS})
 # for CLUSTER
 ##find_package(Boost 1.58.0 REQUIRED COMPONENTS ${Boost_REQUIRED_COMPONENTS})
 

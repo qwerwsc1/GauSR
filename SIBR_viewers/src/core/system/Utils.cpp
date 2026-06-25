@@ -272,8 +272,7 @@ namespace sibr
 				return false;
 			}
 			if(overwrite) {
-				// fs::copy_file(source, destination, boost::filesystem::copy_option::overwrite_if_exists);
-				fs::copy_file(source, destination, boost::filesystem::copy_options::overwrite_existing);
+				fs::copy_file(source, destination, boost::filesystem::copy_option::overwrite_if_exists);
 			} else {
 				fs::copy_file(source, destination);
 			}
@@ -336,6 +335,7 @@ namespace sibr
 		char result[PATH_MAX];
 		ssize_t c = readlink("/proc/self/exe", result, PATH_MAX);
 		len = c;
+		result[len]='\0';
 		const char* path;
 		if( c != -1 )
 			path = dirname(result);

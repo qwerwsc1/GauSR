@@ -10,8 +10,11 @@
 set(SIBR_PROJECT "gaussian")
 project(sibr_${SIBR_PROJECT} LANGUAGES CXX)
 
+sibr_gitlibrary(TARGET CudaRasterizer
+    GIT_REPOSITORY 	"https://github.com/graphdeco-inria/diff-gaussian-rasterization.git"
+    GIT_TAG			"255c532d5fd0c3d83afec0e8e49574b65ae381bd"
+)
 
-sibr_pre_download_gitlibrary(TARGET CudaRasterizer)
 find_package(CUDAToolkit REQUIRED)
 
 file(GLOB SOURCES "*.cpp" "*.h" "*.hpp")

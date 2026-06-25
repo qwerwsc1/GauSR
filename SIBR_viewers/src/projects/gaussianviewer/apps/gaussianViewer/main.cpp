@@ -233,7 +233,7 @@ int main(int ac, char** av)
 	multiViewManager.addCameraForView("Point view", generalCamera);
 
 	// Top view
-	const std::shared_ptr<sibr::SceneDebugView> topView(new sibr::SceneDebugView(scene, generalCamera, myArgs));
+	const std::shared_ptr<sibr::SceneDebugView> topView(new sibr::SceneDebugView(scene, generalCamera, myArgs, myArgs.imagesPath.get()));
 	multiViewManager.addSubView("Top view", topView, usedResolution);
 	CHECK_GL_ERROR;
 	topView->active(false);
