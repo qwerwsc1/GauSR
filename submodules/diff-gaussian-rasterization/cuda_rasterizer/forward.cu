@@ -85,6 +85,8 @@ __device__ float3 computeCov2D(const float3& mean, float focal_x, float focal_y,
 	const float tytz = t.y / t.z;
 	t.x = min(limx, max(-limx, txtz)) * t.z;
 	t.y = min(limy, max(-limy, tytz)) * t.z;
+	txtz = t.x / t.z;
+	tytz = t.y / t.z;
 
 	glm::mat3 J = glm::mat3(
 		focal_x / t.z, 0.0f, -(focal_x * t.x) / (t.z * t.z),
@@ -104,6 +106,38 @@ __device__ float3 computeCov2D(const float3& mean, float focal_x, float focal_y,
 		cov3D[2], cov3D[4], cov3D[5]);
 
 	glm::mat3 cov = glm::transpose(T) * glm::transpose(Vrk) * T;
+	
+	// compute inverse covariance metrix 
+    glm::mat3 cov_cam_inv;
+    bool well_conditioned;
+
+    auto find_min_from_triple = [](auto v_list) -> unsigned int {
+        int bigger_id = int(v_list[0] < v_list[1]);
+        int idx[2]    = {(bigger_id + 1) % 3, (bigger_id + 2) % 3};
+        return idx[int(v_list[idx[0]] > v_list[idx[1]])];
+    };
+
+	glm::mat3 Vrk_eigen_vector;
+	glm::vec3 Vrk_eigen_value;
+	int D = glm_modification::findEigenvaluesSymReal(Vrk, Vrk_eigen_value, Vrk_eigen_vector);
+
+	unsigned int min_id = find_min_from_triple(Vrk_eigen_value);
+
+	well_conditioned = Vrk_eigen_value[min_id] > 1E-8;
+	glm::vec3 eigenvector_min;
+	glm::mat3 Vrk_inv;
+	if (well_conditioned) {
+		glm::mat3 diag = glm::mat3(1 / Vrk_eigen_value[0], 0, 0,
+									0, 1 / Vrk_eigen_value[1], 0,
+									0, 0, 1 / Vrk_eigen_value[2]);
+		Vrk_inv        = Vrk_eigen_vector * diag * glm::transpose(Vrk_eigen_vector);
+	} else {
+		eigenvector_min = Vrk_eigen_vector[min_id];
+		Vrk_inv         = glm::outerProduct(eigenvector_min, eigenvector_min);
+	}
+	cov_cam_inv = glm::transpose(W) * Vrk_inv * W;
+	
+
 
 	// Apply low-pass filter: every Gaussian should be at least
 	// one pixel wide/high. Discard 3rd row and column.
