@@ -21,7 +21,8 @@
 namespace FORWARD
 {
 	// Perform initial steps for each Gaussian prior to rasterization.
-	void preprocess(int P, int D, int M,
+	void preprocess(
+		int P, int D, int M,
 		const float* orig_points,
 		const glm::vec3* scales,
 		const float scale_modifier,
@@ -41,11 +42,14 @@ namespace FORWARD
 		float2* points_xy_image,
 		float* depths,
 		float* cov3Ds,
+		float4* ray_planes,			// ray_planes from radegs
+		float4* normals,			// normals from radegs
 		float* colors,
 		float4* conic_opacity,
 		const dim3 grid,
 		uint32_t* tiles_touched,
-		bool prefiltered);
+		bool prefiltered = false,
+		bool integrate = false);	// integrate from gof
 
 	// Main rasterization method.
 	void render(
@@ -56,10 +60,21 @@ namespace FORWARD
 		const float2* points_xy_image,
 		const float* features,
 		const float4* conic_opacity,
-		float* final_T,
+		const float4* ray_planes,
+		const float4* normals,
+		const float focal_x,
+		const float focal_y,
+		// float* final_T,
 		uint32_t* n_contrib,
 		const float* bg_color,
-		float* out_color);
+		float* out_color,
+		float* out_alpha,
+		float* out_normal,
+		float* out_depth,
+		float* out_mdepth,
+		float* accum_depth,
+		float* normal_length,
+		bool require_depth);
 }
 
 

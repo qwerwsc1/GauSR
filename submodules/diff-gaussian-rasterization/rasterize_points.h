@@ -35,6 +35,7 @@ RasterizeGaussiansCUDA(
 	const int degree,
 	const torch::Tensor& campos,
 	const bool prefiltered,
+	const bool require_depth,	// use geo loss or not
 	const bool debug);
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>

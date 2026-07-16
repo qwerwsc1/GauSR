@@ -156,6 +156,8 @@ CudaRasterizer::GeometryState CudaRasterizer::GeometryState::fromChunk(char*& ch
 {
 	GeometryState geom;
 	obtain(chunk, geom.depths, P, 128);
+	obtain(chunk, geom.ray_planes, P, 128);
+    obtain(chunk, geom.normals, P, 128);
 	obtain(chunk, geom.clamped, P * 3, 128);
 	obtain(chunk, geom.internal_radii, P, 128);
 	obtain(chunk, geom.means2D, P, 128);
@@ -169,12 +171,21 @@ CudaRasterizer::GeometryState CudaRasterizer::GeometryState::fromChunk(char*& ch
 	return geom;
 }
 
+CudaRasterizer::GeometryBwdState CudaRasterizer::GeometryBwdState::fromChunk(char*& chunk, size_t P) {
+    GeometryBwdState geom;
+    obtain(chunk, geom.ray_planes, P, 128);
+    obtain(chunk, geom.normals, P, 128);
+    obtain(chunk, geom.conic_opacity, P, 128);
+    return geom;
+}
+
 CudaRasterizer::ImageState CudaRasterizer::ImageState::fromChunk(char*& chunk, size_t N)
 {
 	ImageState img;
-	obtain(chunk, img.accum_alpha, N, 128);
-	obtain(chunk, img.n_contrib, N, 128);
-	obtain(chunk, img.ranges, N, 128);
+    obtain(chunk, img.n_contrib, N * 2, 128);
+    obtain(chunk, img.ranges, N, 128);
+    obtain(chunk, img.accum_depth, N, 128);
+    obtain(chunk, img.normal_length, N, 128);
 	return img;
 }
 
@@ -216,7 +227,12 @@ int CudaRasterizer::Rasterizer::forward(
 	const float tan_fovx, float tan_fovy,
 	const bool prefiltered,
 	float* out_color,
-	int* radii,
+	float* out_depth,
+    float* out_mdepth,
+    float* out_alpha,
+    float* out_normal,
+    int* radii,
+    bool require_depth,
 	bool debug)
 {
 	const float focal_y = height / (2.0f * tan_fovy);
@@ -265,11 +281,14 @@ int CudaRasterizer::Rasterizer::forward(
 		geomState.means2D,
 		geomState.depths,
 		geomState.cov3D,
+		geomState.ray_planes,
+		geomState.normals,
 		geomState.rgb,
 		geomState.conic_opacity,
 		tile_grid,
 		geomState.tiles_touched,
-		prefiltered
+		prefiltered,
+		false
 	), debug)
 
 	// Compute prefix sum over full list of touched tile counts by Gaussians
@@ -327,10 +346,20 @@ int CudaRasterizer::Rasterizer::forward(
 		geomState.means2D,
 		feature_ptr,
 		geomState.conic_opacity,
-		imgState.accum_alpha,
+		geomState.ray_planes,
+		geomState.normals,
+		focal_x, focal_y,
+		// imgState.accum_alpha,
 		imgState.n_contrib,
 		background,
-		out_color), debug)
+		out_color,
+		out_alpha,
+		out_normal,
+		out_depth,
+		out_mdepth,
+		imgState.accum_depth,
+		imgState.normal_length,
+		require_depth), debug)
 
 	return num_rendered;
 }

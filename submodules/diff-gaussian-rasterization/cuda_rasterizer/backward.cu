@@ -396,7 +396,7 @@ __global__ void preprocessCUDA(
 }
 
 // Backward version of the rendering procedure.
-template <uint32_t C>
+template <uint32_t C, bool GEOMETRY>
 __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 renderCUDA(
 	const uint2* __restrict__ ranges,
@@ -406,13 +406,27 @@ renderCUDA(
 	const float2* __restrict__ points_xy_image,
 	const float4* __restrict__ conic_opacity,
 	const float* __restrict__ colors,
-	const float* __restrict__ final_Ts,
+	const float4* __restrict__ ray_planes,		// from radegs
+	const float4* __restrict__ normals,			// from radegs
+	// const float* __restrict__ final_Ts,
+	const float* __restrict__ alphas,			// from radegs
+	const float* __restrict__ accum_depth,		// from radegs
+	const float* __restrict__ normal_length,	// from radegs
 	const uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ dL_dpixels,
+	const float* __restrict__ dL_dpixel_depths,	// from radegs
+	const float* __restrict__ dL_dpixel_mdepths,// from radegs
+	const float* __restrict__ dL_dalphas,		// from radegs
+	const float* __restrict__ dL_dpixel_normals,// from radegs
+	const float* __restrict__ normalmap,		// from radegs
+	const float focal_x,						// from radegs
+	const float focal_y,						// from radegs
 	float3* __restrict__ dL_dmean2D,
 	float4* __restrict__ dL_dconic2D,
-	float* __restrict__ dL_dopacity,
-	float* __restrict__ dL_dcolors)
+	// float* __restrict__ dL_dopacity,
+	float* __restrict__ dL_dcolors,				// from radegs
+	float4* __restrict__ dL_dray_planes,		// from radegs
+	float4* __restrict__ dL_dnormals)			// from radegs
 {
 	// We rasterize again. Compute necessary block info.
 	auto block = cg::this_thread_block();
@@ -422,6 +436,8 @@ renderCUDA(
 	const uint2 pix = { pix_min.x + block.thread_index().x, pix_min.y + block.thread_index().y };
 	const uint32_t pix_id = W * pix.y + pix.x;
 	const float2 pixf = { (float)pix.x, (float)pix.y };
+	const float2 pixnf = {(pixf.x - (float)(W - 1) / 2.f) / focal_x, (pixf.y - (float)(H - 1) / 2.f) / focal_y};
+    const float rln = rnorm3df(pixnf.x, pixnf.y, 1.f);
 
 	const bool inside = pix.x < W&& pix.y < H;
 	const uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
@@ -435,25 +451,69 @@ renderCUDA(
 	__shared__ float2 collected_xy[BLOCK_SIZE];
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
 	__shared__ float collected_colors[C * BLOCK_SIZE];
+    [[maybe_unused]] __shared__ float3 collected_ray_planes[BLOCK_SIZE];
+    [[maybe_unused]] __shared__ float3 collected_normals[BLOCK_SIZE];
 
 	// In the forward, we stored the final value for T, the
 	// product of all (1 - alpha) factors. 
-	const float T_final = inside ? final_Ts[pix_id] : 0;
-	float T = T_final;
+	const float T_final = inside ? alphas[pix_id] : 0.f;
+    const float T_final = 1.f - w_final;
+
+    float T = T_final;
 
 	// We start from the back. The ID of the last contributing
 	// Gaussian is known from each pixel from the forward.
 	uint32_t contributor = toDo;
 	const int last_contributor = inside ? n_contrib[pix_id] : 0;
+	const int max_contributor  = inside ? n_contrib[pix_id + H * W] : 0.f;
 
 	float accum_rec[C] = { 0 };
 	float dL_dpixel[C];
-	if (inside)
+	float dL_dfinalT;
+    [[maybe_unused]] float accum_t_rec = 0;
+    [[maybe_unused]] float dL_dpixel_t;
+    [[maybe_unused]] float dL_dpixel_mt;
+    [[maybe_unused]] float accum_normal_rec[3] = {0};
+    [[maybe_unused]] float dL_dpixel_normal[3];
+
+	if (inside) 
+	{
 		for (int i = 0; i < C; i++)
 			dL_dpixel[i] = dL_dpixels[i * H * W + pix_id];
 
+		dL_dfinalT = -dL_dalphas[pix_id];		// T = 1 - alpha
+		for (int ch = 0; ch < C; ch++)
+			dL_dfinalT += bg_color[ch] * dL_dpixel[ch];
+
+		if constexpr (GEOMETRY) 
+		{
+            float dL_dpixel_depth_w = dL_dpixel_depths[pix_id];
+            float pixel_accum_depth = accum_depth[pix_id];
+            float inv_w = 1 / w_final;
+            dL_dfinalT += dL_dpixel_depth_w * (pixel_accum_depth * inv_w) * inv_w;
+            dL_dpixel_t = dL_dpixel_depth_w * inv_w * rln;
+            dL_dpixel_mt = dL_dpixel_mdepths[pix_id] * rln;
+
+            glm::vec3 dL_dpixel_normaln = glm::vec3(dL_dpixel_normals[pix_id], dL_dpixel_normals[H * W + pix_id], dL_dpixel_normals[2 * H * W + pix_id]);
+            glm::vec3 normaln = glm::vec3(normalmap[pix_id], normalmap[H * W + pix_id], normalmap[2 * H * W + pix_id]);
+            float normal_len = normal_length[pix_id];
+            const float small = (float)(normal_len < NORMALIZE_EPS);
+            const float large = 1.0f - small;
+            const float denom = small * NORMALIZE_EPS + large * normal_len;
+            const glm::vec3 proj = glm::dot(dL_dpixel_normaln, normaln) * normaln * large;
+            const glm::vec3 numerator = dL_dpixel_normaln - proj;
+
+            for (int ch = 0; ch < 3; ch++)
+                dL_dpixel_normal[ch] = numerator[ch] / denom;
+        }
+	}
+
+
 	float last_alpha = 0;
 	float last_color[C] = { 0 };
+	[[maybe_unused]] float last_t = 0;
+    [[maybe_unused]] float last_normal[3] = {0};
+
 
 	// Gradient of pixel coordinate w.r.t. normalized 
 	// screen-space viewport corrdinates (-1 to 1)
@@ -475,6 +535,14 @@ renderCUDA(
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
 			for (int i = 0; i < C; i++)
 				collected_colors[i * BLOCK_SIZE + block.thread_rank()] = colors[coll_id * C + i];
+
+			if constexpr (GEOMETRY) 
+			{
+                float4 ray_plane = ray_planes[coll_id];
+                float4 normal = normals[coll_id];
+                collected_ray_planes[block.thread_rank()] = {ray_plane.x, ray_plane.y, ray_plane.z};
+                collected_normals[block.thread_rank()] = {normal.x, normal.y, normal.z};
+            }
 		}
 		block.sync();
 
@@ -492,16 +560,26 @@ renderCUDA(
 			const float2 d = { xy.x - pixf.x, xy.y - pixf.y };
 			const float4 con_o = collected_conic_opacity[j];
 			const float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
-			if (power > 0.0f)
-				continue;
 
 			const float G = exp(power);
 			const float alpha = min(0.99f, con_o.w * G);
-			if (alpha < 1.0f / 255.0f)
-				continue;
 
-			T = T / (1.f - alpha);
-			const float dchannel_dcolor = alpha * T;
+            bool valid = !(done || (contributor >= last_contributor) || (power > 0.0f) || (alpha < 1.0f / 255.0f));
+            if (!warp.any(valid))
+                continue;
+
+			float dL_dcolors_local[C]                    = {0};
+            [[maybe_unused]] float3 dL_dnormals_local    = {0};
+            [[maybe_unused]] float3 dL_dray_planes_local = {0};
+            float3 dL_dmean2D_local                      = {0};
+            float4 dL_dconic2D_local                     = {0};
+
+			if (valid) 
+			{
+				T = T / (1.f - alpha);
+				const float dchannel_dcolor = alpha * T;
+			}
+			
 
 			// Propagate gradients to per-Gaussian colors and keep
 			// gradients w.r.t. alpha (blending factor for a Gaussian/pixel
