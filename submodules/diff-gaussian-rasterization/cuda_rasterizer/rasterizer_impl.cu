@@ -367,12 +367,14 @@ int CudaRasterizer::Rasterizer::forward(
 // Produce necessary gradients for optimization, corresponding
 // to forward render pass
 void CudaRasterizer::Rasterizer::backward(
+	std::function<char*(size_t)> geometryBuffer,
 	const int P, int D, int M, int R,
 	const float* background,
 	const int width, int height,
 	const float* means3D,
 	const float* shs,
 	const float* colors_precomp,
+	const float* opacities,
 	const float* scales,
 	const float scale_modifier,
 	const float* rotations,
@@ -382,10 +384,16 @@ void CudaRasterizer::Rasterizer::backward(
 	const float* campos,
 	const float tan_fovx, float tan_fovy,
 	const int* radii,
+	const float* normalmap,
+    const float* alphas,
 	char* geom_buffer,
 	char* binning_buffer,
 	char* img_buffer,
 	const float* dL_dpix,
+	const float* dL_dpix_depth,
+    const float* dL_dpix_mdepth,
+    const float* dL_dalphas,
+    const float* dL_dpixel_normals,
 	float* dL_dmean2D,
 	float* dL_dconic,
 	float* dL_dopacity,
@@ -395,11 +403,16 @@ void CudaRasterizer::Rasterizer::backward(
 	float* dL_dsh,
 	float* dL_dscale,
 	float* dL_drot,
+	bool require_depth,
 	bool debug)
 {
 	GeometryState geomState = GeometryState::fromChunk(geom_buffer, P);
 	BinningState binningState = BinningState::fromChunk(binning_buffer, R);
 	ImageState imgState = ImageState::fromChunk(img_buffer, width * height);
+
+	size_t chunk_size = required<GeometryBwdState>(P);
+    char* chunkptr = geometryBuffer(chunk_size);
+    GeometryBwdState geomBwdState = GeometryBwdState::fromChunk(chunkptr, P);
 
 	if (radii == nullptr)
 	{
@@ -426,19 +439,32 @@ void CudaRasterizer::Rasterizer::backward(
 		geomState.means2D,
 		geomState.conic_opacity,
 		color_ptr,
-		imgState.accum_alpha,
+		geomState.ray_planes,
+		geomState.normals,
+		alphas,
+		imgState.accum_depth,
+		imgState.normal_length,
 		imgState.n_contrib,
 		dL_dpix,
+		dL_dpix_depth,
+		dL_dpix_mdepth,
+		dL_dalphas,
+		dL_dpixel_normals,
+		normalmap,
+		focal_x, focal_y,
 		(float3*)dL_dmean2D,
-		(float4*)dL_dconic,
-		dL_dopacity,
-		dL_dcolor), debug)
+		geomBwdState.conic_opacity,
+		dL_dcolor,
+		geomBwdState.ray_planes,
+		geomBwdState.normals,
+		require_depth), debug)
 
 	// Take care of the rest of preprocessing. Was the precomputed covariance
 	// given to us or a scales/rot pair? If precomputed, pass that. If not,
 	// use the one we computed ourselves.
 	const float* cov3D_ptr = (cov3D_precomp != nullptr) ? cov3D_precomp : geomState.cov3D;
-	CHECK_CUDA(BACKWARD::preprocess(P, D, M,
+	CHECK_CUDA(BACKWARD::preprocess(
+		P, D, M,
 		(float3*)means3D,
 		radii,
 		shs,
@@ -453,7 +479,9 @@ void CudaRasterizer::Rasterizer::backward(
 		tan_fovx, tan_fovy,
 		(glm::vec3*)campos,
 		(float3*)dL_dmean2D,
-		dL_dconic,
+		geomBwdState.conic_opacity,
+		geomBwdState.ray_planes,
+		geomBwdState.normals,
 		(glm::vec3*)dL_dmean3D,
 		dL_dcolor,
 		dL_dcov3D,

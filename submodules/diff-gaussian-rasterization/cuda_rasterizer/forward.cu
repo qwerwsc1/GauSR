@@ -117,7 +117,6 @@ __device__ __forceinline__ bool computeCov2D(const float3& mean, float focal_x, 
     cov2D[1] = float(cov[0][1]);
     cov2D[2] = float(cov[1][1] + 0.3f);
 
-
 	// compute inverse covariance metrix 
     glm::mat3 cov_cam_inv;
     bool well_conditioned;
@@ -155,7 +154,8 @@ __device__ __forceinline__ bool computeCov2D(const float3& mean, float focal_x, 
     glm::vec3 uvh_m = cov_cam_inv * uvh;
     glm::vec3 uvh_mn = glm::normalize(uvh_m);
 
-	if (isnan(uvh_mn.x)) {
+	if (isnan(uvh_mn.x)) 
+	{
 		*ray_plane = {0};
 		*normal = {0, 0, -1, 0};
 	} else {

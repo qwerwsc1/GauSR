@@ -58,6 +58,7 @@ namespace CudaRasterizer
 			bool debug = false);
 
 		static void backward(
+			std::function<char*(size_t)> geometryBuffer,
 			const int P, int D, int M, int R,
 			const float* background,
 			const int width, int height,
@@ -77,6 +78,10 @@ namespace CudaRasterizer
 			char* binning_buffer,
 			char* image_buffer,
 			const float* dL_dpix,
+			const float* dL_dpix_depth,
+			const float* dL_dpix_mdepth,
+			const float* dL_dalphas,
+			const float* dL_dpixel_normals,
 			float* dL_dmean2D,
 			float* dL_dconic,
 			float* dL_dopacity,
@@ -86,6 +91,7 @@ namespace CudaRasterizer
 			float* dL_dsh,
 			float* dL_dscale,
 			float* dL_drot,
+			bool require_depth,
 			bool debug);
 	};
 };
