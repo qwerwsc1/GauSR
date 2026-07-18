@@ -190,7 +190,7 @@ __global__ void computeCov2DCUDA(
 	const float4* dL_dconics,
 	const float4* dL_dray_planes,
     const float4* dL_dnormals,
-	float3* dL_dmeans,
+	glm::vec3* dL_dmeans,
 	float* dL_dcov)
 {
 	auto idx = cg::this_grid().thread_rank();
@@ -982,7 +982,7 @@ void BACKWARD::preprocess(
 		dL_dconic,
 		dL_dray_plane,
         dL_dnormals,
-		(float3*)dL_dmean3D,
+		dL_dmean3D,
 		dL_dcov3D);
 
 	// Propagate gradients for remaining steps: finish 3D mean gradients,
@@ -994,13 +994,13 @@ void BACKWARD::preprocess(
 		radii,
 		shs,
 		clamped,
-		(glm::vec3*)scales,
-		(glm::vec4*)rotations,
+		scales,
+		rotations,
 		scale_modifier,
 		projmatrix,
 		campos,
-		(float3*)dL_dmean2D,
-		(glm::vec3*)dL_dmean3D,
+		dL_dmean2D,
+		dL_dmean3D,
 		dL_dcolor,
 		dL_dcov3D,
 		dL_dsh,

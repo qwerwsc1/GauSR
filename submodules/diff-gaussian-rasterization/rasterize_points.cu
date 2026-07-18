@@ -24,6 +24,7 @@
 #include <string>
 #include <functional>
 
+template <bool ZEROS = false>
 std::function<char*(size_t N)> resizeFunctional(torch::Tensor& t) {
     auto lambda = [&t](size_t N) {
         t.resize_({(long long)N});
@@ -151,7 +152,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	const int R,
 	const torch::Tensor& binningBuffer,
 	const torch::Tensor& imageBuffer,
-	const torch::Tensor& alpha,
+	const torch::Tensor& alphas,
     const bool require_depth,
 	const bool debug) 
 {
@@ -177,11 +178,13 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 
   	torch::Device device(torch::kCUDA);
     torch::TensorOptions options(torch::kByte);
-    torch::Tensor geomBwdBuffer           = torch::empty({0}, options.device(device));
+    torch::Tensor geomBwdBuffer = torch::empty({0}, options.device(device));
     std::function<char*(size_t)> geomFunc = resizeFunctional<true>(geomBwdBuffer);
+	
 	if(P != 0)
 	{  
 		CudaRasterizer::Rasterizer::backward(
+			geomFunc,
 			P, degree, M, R,
 			background.contiguous().data<float>(),
 			W, H, 
@@ -217,6 +220,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 			dL_dsh.contiguous().data<float>(),
 			dL_dscales.contiguous().data<float>(),
 			dL_drotations.contiguous().data<float>(),
+			require_depth,
 			debug);
 	}
 

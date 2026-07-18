@@ -45,7 +45,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         sh_degree=pc.active_sh_degree,
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
-        require_depth = require_depth,
+        require_depth=require_depth,
         debug=pipe.debug
     )
 
@@ -83,7 +83,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, radii,rendered_expected_depth, rendered_median_depth, rendered_normal = rasterizer(
+    rendered_image, radii, rendered_expected_depth, rendered_median_depth, rendered_alpha, rendered_normal = rasterizer(
         means3D = means3D,
         means2D = means2D,
         shs = shs,
@@ -96,6 +96,12 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
     return {"render": rendered_image,
+            # "mask": rendered_alpha,
+            "expected_depth": rendered_expected_depth,
+            "median_depth": rendered_median_depth,
+            "mask": rendered_alpha,
+            "normal":rendered_normal,
+            "viewspace_points": means2D,
             "viewspace_points": screenspace_points,
             "visibility_filter" : radii > 0,
             "radii": radii}

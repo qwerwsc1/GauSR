@@ -28,6 +28,8 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 
+from utils.graphics_utils import depth_double_to_normal, depth_to_normal
+
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
@@ -46,6 +48,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
+    ema_normal_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
     for iteration in range(first_iter, opt.iterations + 1):        
@@ -76,7 +79,45 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        rgb_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+
+        # depth-normal consistency Loss
+        if require_reg and opt.lambda_depth_normal > 0:
+            rendered_expected_depth: torch.Tensor = render_pkg["expected_depth"]
+            rendered_median_depth: torch.Tensor = render_pkg["median_depth"]
+            rendered_normal: torch.Tensor = render_pkg["normal"]
+            if 0.0 < dataset.depth_ratio < 1.0:
+                depth_normal = depth_double_to_normal(viewpoint_cam, rendered_expected_depth, rendered_median_depth)
+                normal_error_map = 1 - torch.linalg.vecdot(rendered_normal.unsqueeze(0), depth_normal, dim=1)
+                depth_normal_loss = (1 - dataset.depth_ratio) * normal_error_map[0].mean() + dataset.depth_ratio * normal_error_map[1].mean()
+                depth_normal = None
+            else:
+                depth_map = rendered_expected_depth if dataset.depth_ratio < 1.0 else rendered_median_depth
+                depth_normal = depth_to_normal(viewpoint_cam, depth_map)
+                normal_error_map = 1 - torch.linalg.vecdot(rendered_normal, depth_normal, dim=0)
+                depth_normal_loss = normal_error_map.mean()
+        else:
+            depth_normal_loss = torch.tensor([0], dtype=torch.float32, device="cuda")
+
+        loss = rgb_loss + opt.lambda_depth_normal * depth_normal_loss
+
+        if require_reg and iteration % 200 == 0:
+            import cv2
+            import numpy as np
+            gt_img_show = (viewpoint_cam.original_image.permute(1, 2, 0).clamp(0, 1)[:, :, [2, 1, 0]] * 255).detach().cpu().numpy().astype(np.uint8)
+            img_show = ((render_pkg["render"]).permute(1, 2, 0).clamp(0, 1)[:, :, [2, 1, 0]] * 255).detach().cpu().numpy().astype(np.uint8)
+            normal_show = (((render_pkg["normal"] + 1.0) * 0.5).permute(1, 2, 0).clamp(0, 1) * 255).detach().cpu().numpy().astype(np.uint8)
+            depth_normal_show = (((depth_normal + 1.0) * 0.5).permute(1, 2, 0).clamp(0, 1) * 255).detach().cpu().numpy().astype(np.uint8)
+            # d_mask_show = (weights.float() * 255).detach().cpu().numpy().astype(np.uint8)
+            # d_mask_show_color = cv2.applyColorMap(d_mask_show, cv2.COLORMAP_MAGMA)
+            depth = render_pkg["expected_depth"].squeeze().detach().cpu().numpy()
+            depth_i = (depth - depth.min()) / (depth.max() - depth.min() + 1e-20)
+            depth_i = (depth_i * 255).clip(0, 255).astype(np.uint8)
+            depth_color = cv2.applyColorMap(depth_i, cv2.COLORMAP_MAGMA)
+            row0 = np.concatenate([gt_img_show, img_show, depth_normal_show, depth_color, normal_show], axis=1)
+            # row1 = np.concatenate([d_mask_show_color, depth_color, normal_show], axis=1)
+            image_to_show = np.concatenate([row0], axis=0)
+            cv2.imwrite(os.path.join(dataset.model_path, "debug", "%05d" % iteration + "_" + viewpoint_cam.image_name + ".jpg"), image_to_show)
         loss.backward()
 
         iter_end.record()
@@ -84,10 +125,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         with torch.no_grad():
             # Progress bar
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
+            ema_normal_loss_for_log = 0.4 * depth_normal_loss.item() + 0.6 * ema_normal_loss_for_log
             if iteration % 10 == 0:
-                progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}"})
+                progress_bar.set_postfix({
+                    "Loss": f"{ema_loss_for_log:.{7}f}",
+                    "loss_normal": f"{ema_normal_loss_for_log:.{4}f}"})
                 progress_bar.update(10)
             if iteration == opt.iterations:
+                # record training time
+                import json
+                time = progress_bar.format_dict["elapsed"]
+                time_path = os.path.join(dataset.model_path, "training_time.json")
+                with open(time_path, "w") as f:
+                    json.dump({"training_time": progress_bar.format_interval(time)},f,indent=4)
                 progress_bar.close()
 
             # Log and save
