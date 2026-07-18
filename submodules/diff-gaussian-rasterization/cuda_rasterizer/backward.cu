@@ -184,14 +184,17 @@ __global__ void computeCov2DCUDA(
 	const float3* means,
 	const int* radii,
 	const float* cov3Ds,
+	const float* opacities,
 	const float h_x, float h_y,
 	const float tan_fovx, float tan_fovy,
+	const float kernel_size,
 	const float* view_matrix,
 	const float4* dL_dconics,
 	const float4* dL_dray_planes,
     const float4* dL_dnormals,
 	glm::vec3* dL_dmeans,
-	float* dL_dcov)
+	float* dL_dcov,
+	float* dL_dopacity)
 {
 	auto idx = cg::this_grid().thread_rank();
 	if (idx >= P || !(radii[idx] > 0))
@@ -215,7 +218,7 @@ __global__ void computeCov2DCUDA(
     float dL_dtc = dL_dray_plane.z;
 
 	float3 t = transformPoint4x3(mean, view_matrix);
-	float rtc    = rnorm3df(t.x, t.y, t.z);
+	float rtc = rnorm3df(t.x, t.y, t.z);
     float3 dL_dt = {t.x * rtc * dL_dtc, t.y * rtc * dL_dtc, t.z * rtc * dL_dtc};
 
 	const float limx = 1.3f * tan_fovx;
@@ -224,12 +227,12 @@ __global__ void computeCov2DCUDA(
 	float tytz = t.y / t.z;
 	t.x = min(limx, max(-limx, txtz)) * t.z;
 	t.y = min(limy, max(-limy, tytz)) * t.z;
-	txtz = t.x / t.z;
-	tytz = t.y / t.z;
+
 	
 	const float x_grad_mul = txtz < -limx || txtz > limx ? 0 : 1;
 	const float y_grad_mul = tytz < -limy || tytz > limy ? 0 : 1;
-
+	txtz = t.x / t.z;
+	tytz = t.y / t.z;
 
 	glm::mat3 J = glm::mat3(
 		h_x / t.z, 0.0f, -(h_x * t.x) / (t.z * t.z),
@@ -243,16 +246,6 @@ __global__ void computeCov2DCUDA(
 
 	glm::mat3 T = W * J;
 
-	// Reading location of 3D covariance for this Gaussian
-	const float* cov3D = cov3Ds + 6 * idx;
-
-	glm::mat3 Vrk = glm::mat3(
-		cov3D[0], cov3D[1], cov3D[2],
-		cov3D[1], cov3D[3], cov3D[4],
-		cov3D[2], cov3D[4], cov3D[5]);
-
-	// glm::mat3 cov2D;
-	glm::mat3 cov2D = glm::transpose(T) * glm::transpose(Vrk) * T;
 
     glm::mat3 cov_cam_inv;
 
@@ -284,7 +277,16 @@ __global__ void computeCov2DCUDA(
         return idx;
     };
 
+	// Reading location of 3D covariance for this Gaussian
+	const float* cov3D = cov3Ds + 6 * idx;
 
+	glm::mat3 Vrk = glm::mat3(
+		cov3D[0], cov3D[1], cov3D[2],
+		cov3D[1], cov3D[3], cov3D[4],
+		cov3D[2], cov3D[4], cov3D[5]);
+
+	// glm::mat3 cov2D;
+	glm::mat3 cov2D = glm::transpose(T) * glm::transpose(Vrk) * T;
 
 	glm_modification::findEigenvaluesSymReal(Vrk, Vrk_eigen_value, Vrk_eigen_vector);
 
@@ -303,6 +305,10 @@ __global__ void computeCov2DCUDA(
 		Vrk_inv = glm::outerProduct(eigenvector_min, eigenvector_min);
 	}
 	cov_cam_inv = glm::transpose(W) * Vrk_inv * W;
+
+    const float det_0 = fmaxf(1e-6f, cov2D[0][0] * cov2D[1][1] - cov2D[0][1] * cov2D[0][1]);
+    const float det_1 = fmaxf(1e-6f, (cov2D[0][0] + kernel_size) * (cov2D[1][1] + kernel_size) - cov2D[0][1] * cov2D[0][1]);
+    const float coef  = sqrtf(det_0 / det_1);
 
 	glm::vec3 uvh = {txtz, tytz, 1};
     glm::vec3 uvh_m = cov_cam_inv * uvh;
@@ -341,6 +347,7 @@ __global__ void computeCov2DCUDA(
         float factor_normal = l / ray_len2;
         glm::vec3 uvh_m_vb = uvh_mn / clamp_vbn;
         plane = nJ_inv * uvh_m_vb;
+
         glm::vec3 ray_normal_vector = {-plane.x * factor_normal, -plane.y * factor_normal, -1};
 
         glm::vec3 cam_normal_vector = nJ * ray_normal_vector;
@@ -413,10 +420,19 @@ __global__ void computeCov2DCUDA(
         }
     }
 
-	// Use helper variables for 2D covariance entries. More compact.
-	float a = cov2D[0][0] += 0.3f;
-	float b = cov2D[0][1];
-	float c = cov2D[1][1] += 0.3f;
+    const float opacity      = opacities[idx];
+    const float dL_dcoef     = dL_dconic.w * opacity;
+    const float dL_dsqrtcoef = dL_dcoef * 0.5f / (coef + 1e-6f);
+    const float dL_ddet0     = dL_dsqrtcoef / det_1;
+    const float dL_ddet1     = -dL_ddet0 * coef;
+
+    const float dcoef_da = dL_ddet0 * cov2D[1][1] + dL_ddet1 * (cov2D[1][1] + kernel_size);
+    const float dcoef_db = (-2.f * cov2D[0][1]) * (dL_ddet0 + dL_ddet1);
+    const float dcoef_dc = dL_ddet0 * cov2D[0][0] + dL_ddet1 * (cov2D[0][0] + kernel_size);
+    // Use helper variables for 2D covariance entries. More compact.
+    float a = cov2D[0][0] + kernel_size;
+    float b = cov2D[0][1];
+    float c = cov2D[1][1] + kernel_size;
 
 	float denom = a * c - b * b;
 	float dL_da = 0, dL_db = 0, dL_dc = 0;
@@ -431,6 +447,13 @@ __global__ void computeCov2DCUDA(
 		dL_da = denom2inv * (-c * c * dL_dconic.x + 2 * b * c * dL_dconic.y + (denom - a * c) * dL_dconic.z);
 		dL_dc = denom2inv * (-a * a * dL_dconic.z + 2 * a * b * dL_dconic.y + (denom - a * c) * dL_dconic.x);
 		dL_db = denom2inv * 2 * (b * c * dL_dconic.x - (denom + 2 * b * b) * dL_dconic.y + a * b * dL_dconic.z);
+
+        dL_da += dcoef_da;
+        dL_dc += dcoef_dc;
+        dL_db += dcoef_db;
+
+        // update dL_dopacity
+        dL_dopacity[idx] = dL_dconic.w * coef;
 
 		// Gradients of loss L w.r.t. each 3D covariance matrix (Vrk) entry, 
 		// given gradients w.r.t. 2D covariance matrix (diagonal).
@@ -582,13 +605,14 @@ __global__ void preprocessCUDA(
 	const float* shs,
 	const bool* clamped,
 	const glm::vec3* scales,
-	const glm::vec4* rotations,
+	const float4* rotations,
 	const float scale_modifier,
+	const float* view,
 	const float* proj,
 	const glm::vec3* campos,
 	const float3* dL_dmean2D,
 	glm::vec3* dL_dmeans,
-	float* dL_dcolor,
+	const float* dL_dcolor,
 	float* dL_dcov3D,
 	float* dL_dsh,
 	glm::vec3* dL_dscale,
@@ -615,15 +639,18 @@ __global__ void preprocessCUDA(
 
 	// That's the second part of the mean gradient. Previous computation
 	// of cov2D and following SH conversion also affects it.
-	dL_dmeans[idx] += dL_dmean;
+    dL_dmeans[idx] += glm::vec3(
+        dL_dmean.x,
+        dL_dmean.y,
+        dL_dmean.z);
 
 	// Compute gradient updates due to computing colors from SHs
 	if (shs)
 		computeColorFromSH(idx, D, M, (glm::vec3*)means, *campos, shs, clamped, (glm::vec3*)dL_dcolor, (glm::vec3*)dL_dmeans, (glm::vec3*)dL_dsh);
 
 	// Compute gradient updates due to computing covariance from scale/rotation
-	if (scales)
-		computeCov3D(idx, scales[idx], scale_modifier, rotations[idx], dL_dcov3D, dL_dscale, dL_drot);
+	// if (scales)
+	// 	computeCov3D(idx, scales[idx], scale_modifier, rotations[idx], dL_dcov3D, dL_dscale, dL_drot);
 }
 
 // Backward version of the rendering procedure.
@@ -729,7 +756,7 @@ renderCUDA(
             glm::vec3 dL_dpixel_normaln = glm::vec3(dL_dpixel_normals[pix_id], dL_dpixel_normals[H * W + pix_id], dL_dpixel_normals[2 * H * W + pix_id]);
             glm::vec3 normaln = glm::vec3(normalmap[pix_id], normalmap[H * W + pix_id], normalmap[2 * H * W + pix_id]);
             float normal_len = normal_length[pix_id];
-            const float small = (float)(normal_len < NORMALIZE_EPS);
+            const float small = static_cast<float>(normal_len < NORMALIZE_EPS);
             const float large = 1.0f - small;
             const float denom = small * NORMALIZE_EPS + large * normal_len;
             const glm::vec3 proj = glm::dot(dL_dpixel_normaln, normaln) * normaln * large;
@@ -944,26 +971,29 @@ renderCUDA(
 void BACKWARD::preprocess(
 	int P, int D, int M,
 	const float3* means3D,
+	const float* opacities,
 	const int* radii,
 	const float* shs,
 	const bool* clamped,
 	const glm::vec3* scales,
-	const glm::vec4* rotations,
+	const float4* rotations,
 	const float scale_modifier,
 	const float* cov3Ds,
 	const float* viewmatrix,
 	const float* projmatrix,
 	const float focal_x, float focal_y,
 	const float tan_fovx, float tan_fovy,
+	const float kernel_size,
 	const glm::vec3* campos,
 	const float3* dL_dmean2D,
 	const float4* dL_dconic,
 	const float4* dL_dray_plane,
     const float4* dL_dnormals,
 	glm::vec3* dL_dmean3D,
-	float* dL_dcolor,
+	const float* dL_dcolor,
 	float* dL_dcov3D,
 	float* dL_dsh,
+	float* dL_dopacity,
 	glm::vec3* dL_dscale,
 	glm::vec4* dL_drot)
 {
@@ -976,16 +1006,19 @@ void BACKWARD::preprocess(
 		means3D,
 		radii,
 		cov3Ds,
+		opacities,
 		focal_x,
 		focal_y,
 		tan_fovx,
 		tan_fovy,
+		kernel_size,
 		viewmatrix,
 		dL_dconic,
 		dL_dray_plane,
         dL_dnormals,
 		dL_dmean3D,
-		dL_dcov3D);
+		dL_dcov3D,
+		dL_dopacity);
 
 	// Propagate gradients for remaining steps: finish 3D mean gradients,
 	// propagate color gradients to SH (if desireD), propagate 3D covariance
@@ -999,6 +1032,7 @@ void BACKWARD::preprocess(
 		scales,
 		rotations,
 		scale_modifier,
+		viewmatrix,
 		projmatrix,
 		campos,
 		dL_dmean2D,

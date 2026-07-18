@@ -51,7 +51,8 @@ uint32_t getHigherMsb(uint32_t n)
 
 // Wrapper method to call auxiliary coarse frustum containment test.
 // Mark all Gaussians that pass it.
-__global__ void checkFrustum(int P,
+__global__ void checkFrustum(
+	int P,
 	const float* orig_points,
 	const float* viewmatrix,
 	const float* projmatrix,
@@ -61,8 +62,9 @@ __global__ void checkFrustum(int P,
 	if (idx >= P)
 		return;
 
-	float3 p_view;
-	present[idx] = in_frustum(idx, orig_points, viewmatrix, projmatrix, false, p_view);
+	float3 p_org = {orig_points[idx * 3], orig_points[idx * 3 + 1], orig_points[idx * 3 + 2]};
+    float3 p_view;
+	present[idx] = in_frustum(p_org, viewmatrix, projmatrix, false, p_view);
 }
 
 // Generates one key/value pair for all Gaussian / tile overlaps. 
@@ -225,6 +227,7 @@ int CudaRasterizer::Rasterizer::forward(
 	const float* projmatrix,
 	const float* cam_pos,
 	const float tan_fovx, float tan_fovy,
+	const float kernel_size,
 	const bool prefiltered,
 	float* out_color,
 	float* out_depth,
@@ -266,7 +269,7 @@ int CudaRasterizer::Rasterizer::forward(
 		means3D,
 		(glm::vec3*)scales,
 		scale_modifier,
-		(glm::vec4*)rotations,
+		(float4*)rotations,
 		opacities,
 		shs,
 		geomState.clamped,
@@ -277,6 +280,7 @@ int CudaRasterizer::Rasterizer::forward(
 		width, height,
 		focal_x, focal_y,
 		tan_fovx, tan_fovy,
+		kernel_size,
 		radii,
 		geomState.means2D,
 		geomState.depths,
@@ -359,7 +363,8 @@ int CudaRasterizer::Rasterizer::forward(
 		out_mdepth,
 		imgState.accum_depth,
 		imgState.normal_length,
-		require_depth), debug)
+		require_depth
+	), debug)
 
 	return num_rendered;
 }
@@ -374,7 +379,7 @@ void CudaRasterizer::Rasterizer::backward(
 	const float* means3D,
 	const float* shs,
 	const float* colors_precomp,
-	// const float* opacities,
+	const float* opacities,
 	const float* scales,
 	const float scale_modifier,
 	const float* rotations,
@@ -383,6 +388,7 @@ void CudaRasterizer::Rasterizer::backward(
 	const float* projmatrix,
 	const float* campos,
 	const float tan_fovx, float tan_fovy,
+	const float kernel_size,
 	const int* radii,
 	const float* normalmap,
     const float* alphas,
@@ -395,7 +401,7 @@ void CudaRasterizer::Rasterizer::backward(
     const float* dL_dalphas,
     const float* dL_dpixel_normals,
 	float* dL_dmean2D,
-	float* dL_dconic,
+	// float* dL_dconic,
 	float* dL_dopacity,
 	float* dL_dcolor,
 	float* dL_dmean3D,
@@ -457,7 +463,8 @@ void CudaRasterizer::Rasterizer::backward(
 		dL_dcolor,
 		geomBwdState.ray_planes,
 		geomBwdState.normals,
-		require_depth), debug)
+		require_depth
+	), debug)
 
 	// Take care of the rest of preprocessing. Was the precomputed covariance
 	// given to us or a scales/rot pair? If precomputed, pass that. If not,
@@ -466,17 +473,19 @@ void CudaRasterizer::Rasterizer::backward(
 	CHECK_CUDA(BACKWARD::preprocess(
 		P, D, M,
 		(float3*)means3D,
+		opacities,
 		radii,
 		shs,
 		geomState.clamped,
 		(glm::vec3*)scales,
-		(glm::vec4*)rotations,
+		(float4*)rotations,
 		scale_modifier,
 		cov3D_ptr,
 		viewmatrix,
 		projmatrix,
 		focal_x, focal_y,
 		tan_fovx, tan_fovy,
+		kernel_size,
 		(glm::vec3*)campos,
 		(float3*)dL_dmean2D,
 		geomBwdState.conic_opacity,
@@ -486,6 +495,7 @@ void CudaRasterizer::Rasterizer::backward(
 		dL_dcolor,
 		dL_dcov3D,
 		dL_dsh,
+		dL_dopacity,
 		(glm::vec3*)dL_dscale,
 		(glm::vec4*)dL_drot), debug)
 }

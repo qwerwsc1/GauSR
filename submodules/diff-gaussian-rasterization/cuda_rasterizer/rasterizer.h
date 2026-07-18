@@ -47,14 +47,15 @@ namespace CudaRasterizer
 			const float* projmatrix,
 			const float* cam_pos,
 			const float tan_fovx, float tan_fovy,
+			const float kernel_size,
 			const bool prefiltered,
 			float* out_color,
 			float* out_depth,
 			float* out_mdepth,
 			float* out_alpha,
 			float* out_normal,
-			int* radii,
-			bool require_depth,
+			int* radii = nullptr,
+        	bool require_depth = true,
 			bool debug = false);
 
 		static void backward(
@@ -65,6 +66,7 @@ namespace CudaRasterizer
 			const float* means3D,
 			const float* shs,
 			const float* colors_precomp,
+			const float* opacities,
 			const float* scales,
 			const float scale_modifier,
 			const float* rotations,
@@ -73,6 +75,7 @@ namespace CudaRasterizer
 			const float* projmatrix,
 			const float* campos,
 			const float tan_fovx, float tan_fovy,
+			const float kernel_size,
 			const int* radii,
 			const float* normalmap,
     		const float* alphas,
@@ -85,7 +88,7 @@ namespace CudaRasterizer
 			const float* dL_dalphas,
 			const float* dL_dpixel_normals,
 			float* dL_dmean2D,
-			float* dL_dconic,
+			// float* dL_dconic,
 			float* dL_dopacity,
 			float* dL_dcolor,
 			float* dL_dmean3D,
@@ -93,8 +96,8 @@ namespace CudaRasterizer
 			float* dL_dsh,
 			float* dL_dscale,
 			float* dL_drot,
-			bool require_depth,
-			bool debug);
+			bool require_depth = true,
+			bool debug = false);
 	};
 };
 

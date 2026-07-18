@@ -54,7 +54,8 @@ class ModelParams(ParamGroup):
         self._white_background = False
         self.data_device = "cuda"
         self.eval = False
-
+        self.kernel_size = 0.0 # Size of 2D filter in mip-splatting
+        
         self.depth_ratio = 0.0
         super().__init__(parser, "Loading Parameters", sentinel)
 
