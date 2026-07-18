@@ -46,6 +46,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
+    # fix problem
+    trainCameras = scene.getTrainCameras().copy()
+    gaussians.compute_3D_filter(cameras=trainCameras)
+
     viewpoint_stack = None
     ema_loss_for_log = 0.0
     ema_normal_loss_for_log = 0.0
@@ -101,23 +105,24 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         loss = rgb_loss + opt.lambda_depth_normal * depth_normal_loss
 
-        if require_reg and iteration % 200 == 0:
-            import cv2
-            import numpy as np
-            gt_img_show = (viewpoint_cam.original_image.permute(1, 2, 0).clamp(0, 1)[:, :, [2, 1, 0]] * 255).detach().cpu().numpy().astype(np.uint8)
-            img_show = ((render_pkg["render"]).permute(1, 2, 0).clamp(0, 1)[:, :, [2, 1, 0]] * 255).detach().cpu().numpy().astype(np.uint8)
-            normal_show = (((render_pkg["normal"] + 1.0) * 0.5).permute(1, 2, 0).clamp(0, 1) * 255).detach().cpu().numpy().astype(np.uint8)
-            depth_normal_show = (((depth_normal + 1.0) * 0.5).permute(1, 2, 0).clamp(0, 1) * 255).detach().cpu().numpy().astype(np.uint8)
-            # d_mask_show = (weights.float() * 255).detach().cpu().numpy().astype(np.uint8)
-            # d_mask_show_color = cv2.applyColorMap(d_mask_show, cv2.COLORMAP_MAGMA)
-            depth = render_pkg["expected_depth"].squeeze().detach().cpu().numpy()
-            depth_i = (depth - depth.min()) / (depth.max() - depth.min() + 1e-20)
-            depth_i = (depth_i * 255).clip(0, 255).astype(np.uint8)
-            depth_color = cv2.applyColorMap(depth_i, cv2.COLORMAP_MAGMA)
-            row0 = np.concatenate([gt_img_show, img_show, depth_normal_show, depth_color, normal_show], axis=1)
-            # row1 = np.concatenate([d_mask_show_color, depth_color, normal_show], axis=1)
-            image_to_show = np.concatenate([row0], axis=0)
-            cv2.imwrite(os.path.join(dataset.model_path, "debug", "%05d" % iteration + "_" + viewpoint_cam.image_name + ".jpg"), image_to_show)
+        # if iteration % 200 == 0:
+        #     import cv2
+        #     import numpy as np
+        #     gt_img_show = (viewpoint_cam.original_image.permute(1, 2, 0).clamp(0, 1)[:, :, [2, 1, 0]] * 255).detach().cpu().numpy().astype(np.uint8)
+        #     img_show = ((render_pkg["render"]).permute(1, 2, 0).clamp(0, 1)[:, :, [2, 1, 0]] * 255).detach().cpu().numpy().astype(np.uint8)
+        #     # normal_show = (((render_pkg["normal"] + 1.0) * 0.5).permute(1, 2, 0).clamp(0, 1) * 255).detach().cpu().numpy().astype(np.uint8)
+        #     # depth_normal_show = (((depth_normal + 1.0) * 0.5).permute(1, 2, 0).clamp(0, 1) * 255).detach().cpu().numpy().astype(np.uint8)
+        #     # # d_mask_show = (weights.float() * 255).detach().cpu().numpy().astype(np.uint8)
+        #     # # d_mask_show_color = cv2.applyColorMap(d_mask_show, cv2.COLORMAP_MAGMA)
+        #     # depth = render_pkg["expected_depth"].squeeze().detach().cpu().numpy()
+        #     # depth_i = (depth - depth.min()) / (depth.max() - depth.min() + 1e-20)
+        #     # depth_i = (depth_i * 255).clip(0, 255).astype(np.uint8)
+        #     # depth_color = cv2.applyColorMap(depth_i, cv2.COLORMAP_MAGMA)
+        #     # row0 = np.concatenate([gt_img_show, img_show, depth_normal_show, depth_color, normal_show], axis=1)
+        #     row0 = np.concatenate([gt_img_show, img_show], axis=1)
+        #     # row1 = np.concatenate([d_mask_show_color, depth_color, normal_show], axis=1)
+        #     image_to_show = np.concatenate([row0], axis=0)
+        #     cv2.imwrite(os.path.join(dataset.model_path, "debug", "%05d" % iteration + "_" + viewpoint_cam.image_name + ".jpg"), image_to_show)
 
         loss.backward()
         iter_end.record()
@@ -154,10 +159,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
-                    gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
+                    # change from 0.005 to 0.05
+                    gaussians.densify_and_prune(opt.densify_grad_threshold, 0.05, scene.cameras_extent, size_threshold)
+                    gaussians.compute_3D_filter(cameras=trainCameras)
                 
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
+
+            if iteration % 100 == 0 and iteration > opt.densify_until_iter:
+                if iteration < opt.iterations - 100:
+                    # don't update in the end of training
+                    gaussians.compute_3D_filter(cameras=trainCameras)
 
             # Optimizer step
             if iteration < opt.iterations:
