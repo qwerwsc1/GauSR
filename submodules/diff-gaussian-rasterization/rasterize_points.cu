@@ -89,7 +89,7 @@ RasterizeGaussiansCUDA(
 		int M = 0;
 		if(sh.size(0) != 0)
 		{
-		M = sh.size(1);
+			M = sh.size(1);
 		}
 
 		rendered = CudaRasterizer::Rasterizer::forward(
