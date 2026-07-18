@@ -106,24 +106,24 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         loss = rgb_loss + opt.lambda_depth_normal * depth_normal_loss
 
-        # if iteration % 200 == 0:
-        #     import cv2
-        #     import numpy as np
-        #     gt_img_show = (viewpoint_cam.original_image.permute(1, 2, 0).clamp(0, 1)[:, :, [2, 1, 0]] * 255).detach().cpu().numpy().astype(np.uint8)
-        #     img_show = ((render_pkg["render"]).permute(1, 2, 0).clamp(0, 1)[:, :, [2, 1, 0]] * 255).detach().cpu().numpy().astype(np.uint8)
-        #     # normal_show = (((render_pkg["normal"] + 1.0) * 0.5).permute(1, 2, 0).clamp(0, 1) * 255).detach().cpu().numpy().astype(np.uint8)
-        #     # depth_normal_show = (((depth_normal + 1.0) * 0.5).permute(1, 2, 0).clamp(0, 1) * 255).detach().cpu().numpy().astype(np.uint8)
-        #     # # d_mask_show = (weights.float() * 255).detach().cpu().numpy().astype(np.uint8)
-        #     # # d_mask_show_color = cv2.applyColorMap(d_mask_show, cv2.COLORMAP_MAGMA)
-        #     # depth = render_pkg["expected_depth"].squeeze().detach().cpu().numpy()
-        #     # depth_i = (depth - depth.min()) / (depth.max() - depth.min() + 1e-20)
-        #     # depth_i = (depth_i * 255).clip(0, 255).astype(np.uint8)
-        #     # depth_color = cv2.applyColorMap(depth_i, cv2.COLORMAP_MAGMA)
-        #     # row0 = np.concatenate([gt_img_show, img_show, depth_normal_show, depth_color, normal_show], axis=1)
-        #     row0 = np.concatenate([gt_img_show, img_show], axis=1)
-        #     # row1 = np.concatenate([d_mask_show_color, depth_color, normal_show], axis=1)
-        #     image_to_show = np.concatenate([row0], axis=0)
-        #     cv2.imwrite(os.path.join(dataset.model_path, "debug", "%05d" % iteration + "_" + viewpoint_cam.image_name + ".jpg"), image_to_show)
+        if iteration % 200 == 0 and require_reg:
+            import cv2
+            import numpy as np
+            gt_img_show = (viewpoint_cam.original_image.permute(1, 2, 0).clamp(0, 1)[:, :, [2, 1, 0]] * 255).detach().cpu().numpy().astype(np.uint8)
+            img_show = ((render_pkg["render"]).permute(1, 2, 0).clamp(0, 1)[:, :, [2, 1, 0]] * 255).detach().cpu().numpy().astype(np.uint8)
+            normal_show = (((render_pkg["normal"] + 1.0) * 0.5).permute(1, 2, 0).clamp(0, 1) * 255).detach().cpu().numpy().astype(np.uint8)
+            depth_normal_show = (((depth_normal + 1.0) * 0.5).permute(1, 2, 0).clamp(0, 1) * 255).detach().cpu().numpy().astype(np.uint8)
+            # d_mask_show = (weights.float() * 255).detach().cpu().numpy().astype(np.uint8)
+            # d_mask_show_color = cv2.applyColorMap(d_mask_show, cv2.COLORMAP_MAGMA)
+            depth = render_pkg["expected_depth"].squeeze().detach().cpu().numpy()
+            depth_i = (depth - depth.min()) / (depth.max() - depth.min() + 1e-20)
+            depth_i = (depth_i * 255).clip(0, 255).astype(np.uint8)
+            depth_color = cv2.applyColorMap(depth_i, cv2.COLORMAP_MAGMA)
+            row0 = np.concatenate([gt_img_show, img_show, depth_normal_show, depth_color, normal_show], axis=1)
+            # row0 = np.concatenate([gt_img_show, img_show], axis=1)
+            # row1 = np.concatenate([d_mask_show_color, depth_color, normal_show], axis=1)
+            image_to_show = np.concatenate([row0], axis=0)
+            cv2.imwrite(os.path.join(dataset.model_path, "debug", "%05d" % iteration + "_" + viewpoint_cam.image_name + ".jpg"), image_to_show)
 
         loss.backward()
         iter_end.record()
