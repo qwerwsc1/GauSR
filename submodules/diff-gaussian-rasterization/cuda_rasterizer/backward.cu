@@ -779,13 +779,15 @@ renderCUDA(
 		block.sync();
 
 		// Iterate over Gaussians
-		for (int j = 0; !done && j < min(BLOCK_SIZE, toDo); j++)
+		for (int j = 0; j < min(BLOCK_SIZE, toDo); j++)
 		{
 			// Keep track of current Gaussian ID. Skip, if this one
 			// is behind the last contributor for this pixel.
+			bool valid;
+
 			contributor--;
-			if (contributor >= last_contributor)
-				continue;
+			// if (contributor >= last_contributor)
+			// 	continue;
 
 			// Compute blending values, as before.
 			const float2 xy = collected_xy[j];
@@ -796,7 +798,7 @@ renderCUDA(
 			const float G = exp(power);
 			const float alpha = min(0.99f, con_o.w * G);
 
-            bool valid = !(done || (contributor >= last_contributor) || (power > 0.0f) || (alpha < 1.0f / 255.0f));
+            valid = !(done || (contributor >= last_contributor) || (power > 0.0f) || (alpha < 1.0f / 255.0f));
             if (!warp.any(valid))
                 continue;
 

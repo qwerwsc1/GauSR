@@ -118,8 +118,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # row1 = np.concatenate([d_mask_show_color, depth_color, normal_show], axis=1)
             image_to_show = np.concatenate([row0], axis=0)
             cv2.imwrite(os.path.join(dataset.model_path, "debug", "%05d" % iteration + "_" + viewpoint_cam.image_name + ".jpg"), image_to_show)
-        loss.backward()
 
+        loss.backward()
         iter_end.record()
 
         with torch.no_grad():
