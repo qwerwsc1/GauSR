@@ -39,7 +39,7 @@ class Camera(nn.Module):
 
         self.R = torch.tensor(R, dtype=torch.float32).cuda()
         self.T = torch.tensor(T, dtype=torch.float32).cuda()
-        
+
         self.original_image = image.clamp(0.0, 1.0).to(self.data_device)
         self.image_width = self.original_image.shape[2]
         self.image_height = self.original_image.shape[1]
@@ -50,9 +50,9 @@ class Camera(nn.Module):
         self.Cy = float(self.image_height - 1) / 2
 
         if gt_alpha_mask is not None:
-            self.original_image *= gt_alpha_mask.to(self.data_device)
+            self.gt_mask = gt_alpha_mask.to(self.data_device)
         else:
-            self.original_image *= torch.ones((1, self.image_height, self.image_width), device=self.data_device)
+            self.gt_mask = None
 
         self.zfar = 100.0
         self.znear = 0.01
