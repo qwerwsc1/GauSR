@@ -232,3 +232,141 @@ class GaussianRasterizer(nn.Module):
             raster_settings, 
         )
 
+    def sample_depth(self, points3D, means3D, opacities, scales=None, rotations=None, cov3D_precomp=None):
+        if ((scales is None or rotations is None) and cov3D_precomp is None) or (
+            (scales is not None or rotations is not None) and cov3D_precomp is not None
+        ):
+            raise Exception("Please provide exactly one of either scale/rotation pair or precomputed 3D covariance!")
+
+        if scales is None:
+            scales = torch.Tensor([])
+        if rotations is None:
+            rotations = torch.Tensor([])
+        if cov3D_precomp is None:
+            cov3D_precomp = torch.Tensor([])
+        raster_settings = self.raster_settings
+        return _SampleDepth.apply(points3D, means3D, opacities, scales, rotations, cov3D_precomp, raster_settings)
+
+class _SampleDepth(torch.autograd.Function):
+    @staticmethod
+    def forward(
+        ctx,
+        points3D,
+        means3D,
+        opacities,
+        scales,
+        rotations,
+        cov3D_precomp,
+        raster_settings,
+    ):
+
+        # Invoke C++/CUDA rasterization routine
+        # Restructure arguments the way that the C++ lib expects them
+        args = (
+            points3D,
+            means3D,
+            opacities,
+            scales,
+            rotations,
+            raster_settings.scale_modifier,
+            cov3D_precomp,
+            raster_settings.viewmatrix,
+            raster_settings.projmatrix,
+            raster_settings.tanfovx,
+            raster_settings.tanfovy,
+            0.0,
+            raster_settings.image_height,
+            raster_settings.image_width,
+            raster_settings.campos,
+            raster_settings.prefiltered,
+            raster_settings.debug,
+        )
+
+        # Invoke C++/CUDA rasterizer
+        if raster_settings.debug:
+            cpu_args = cpu_deep_copy_tuple(args)  # Copy them before they can be corrupted
+            try:
+                num_rendered, num_points, camera_points, inside, geomBuffer, binningBuffer, pointBuffer, pointBinningBuffer, tileBuffer = (
+                    _C.sample_rasterized_depth(*args)
+                )
+            except Exception as ex:
+                torch.save(cpu_args, "snapshot_fw.dump")
+                print("\nAn error occured in forward. Please forward snapshot_fw.dump for debugging.")
+                raise ex
+        else:
+            num_rendered, num_points, camera_points, inside, geomBuffer, binningBuffer, pointBuffer, pointBinningBuffer, tileBuffer = (
+                _C.sample_rasterized_depth(*args)
+            )
+
+        ctx.raster_settings = raster_settings
+        ctx.num_rendered = num_rendered
+        ctx.num_points = num_points
+        ctx.save_for_backward(
+            points3D, means3D, opacities, scales, rotations, cov3D_precomp, geomBuffer, binningBuffer, pointBuffer, pointBinningBuffer, tileBuffer
+        )
+
+        return camera_points, inside
+
+    @staticmethod
+    def backward(ctx, grad_camera_points, grad_inside):
+        num_rendered = ctx.num_rendered
+        num_points = ctx.num_points
+        raster_settings = ctx.raster_settings
+        points3D, means3D, opacities, scales, rotations, cov3D_precomp, geomBuffer, binningBuffer, pointBuffer, pointBinningBuffer, tileBuffer = (
+            ctx.saved_tensors
+        )
+
+        # Restructure args as C++ method expects them
+        args = (
+            points3D,
+            means3D,
+            opacities,
+            scales,
+            rotations,
+            raster_settings.scale_modifier,
+            cov3D_precomp,
+            raster_settings.viewmatrix,
+            raster_settings.projmatrix,
+            grad_camera_points,
+            raster_settings.tanfovx,
+            raster_settings.tanfovy,
+            raster_settings.kernel_size,
+            raster_settings.image_height,
+            raster_settings.image_width,
+            raster_settings.campos,
+            geomBuffer,
+            binningBuffer,
+            pointBuffer,
+            pointBinningBuffer,
+            tileBuffer,
+            num_rendered,
+            num_points,
+            raster_settings.prefiltered,
+            raster_settings.debug,
+        )
+
+        # Compute gradients for relevant tensors by invoking backward method
+        if raster_settings.debug:
+            cpu_args = cpu_deep_copy_tuple(args)  # Copy them before they can be corrupted
+            try:
+                grad_opacities, grad_means3D, grad_cov3D_precomp, grad_scales, grad_rotations, grad_points3D = _C.sample_rasterized_depth_backward(
+                    *args
+                )
+            except Exception as ex:
+                torch.save(cpu_args, "snapshot_bw.dump")
+                print("\nAn error occured in backward. Writing snapshot_bw.dump for debugging.\n")
+                raise ex
+        else:
+            grad_opacities, grad_means3D, grad_cov3D_precomp, grad_scales, grad_rotations, grad_points3D = _C.sample_rasterized_depth_backward(*args)
+
+        grads = (
+            grad_points3D,
+            grad_means3D,
+            grad_opacities,
+            grad_scales,
+            grad_rotations,
+            grad_cov3D_precomp,
+            None,
+        )
+
+        return grads

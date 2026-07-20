@@ -258,3 +258,174 @@ torch::Tensor markVisible(
 
 	return present;
 }
+
+std::tuple<int, int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+SampleRasterizedDepthCUDA(
+    const torch::Tensor& points3D,
+    const torch::Tensor& means3D,
+    const torch::Tensor& opacity,
+    const torch::Tensor& scales,
+    const torch::Tensor& rotations,
+    const float scale_modifier,
+    const torch::Tensor& cov3D_precomp,
+    const torch::Tensor& viewmatrix,
+    const torch::Tensor& projmatrix,
+    const float tan_fovx,
+    const float tan_fovy,
+    const float kernel_size,
+    const int image_height,
+    const int image_width,
+    const torch::Tensor& campos,
+    const bool prefiltered,
+    const bool debug) 
+{
+    if (means3D.ndimension() != 2 || means3D.size(1) != 3) 
+        AT_ERROR("means3D must have dimensions (num_points, 3)");
+
+    if (points3D.ndimension() < 1 || points3D.size(-1) != 3) 
+        AT_ERROR("points3D must have shape (..., 3) with last dimension == 3");
+
+    const int PN = points3D.numel() / 3;
+    const int P = means3D.size(0);
+    const int H = image_height;
+    const int W = image_width;
+
+    auto int_opts = means3D.options().dtype(torch::kInt32);
+    auto float_opts = means3D.options().dtype(torch::kFloat32);
+    auto bool_opts = means3D.options().dtype(torch::kBool);
+
+    torch::Tensor output = torch::zeros_like(points3D);
+    std::vector<int64_t> inside_sizes(points3D.sizes().begin(), points3D.sizes().end() - 1);
+    torch::Tensor inside = torch::zeros(inside_sizes, bool_opts);
+
+    torch::Device device(torch::kCUDA);
+    torch::TensorOptions options(torch::kByte);
+    torch::Tensor geomBuffer = torch::empty({0}, options.device(device));
+    torch::Tensor binningBuffer = torch::empty({0}, options.device(device));
+    torch::Tensor pointBuffer = torch::empty({0}, options.device(device));
+    torch::Tensor point_binningBuffer = torch::empty({0}, options.device(device));
+    torch::Tensor tileBuffer = torch::empty({0}, options.device(device));
+
+    std::function<char*(size_t)> geomFunc = resizeFunctional(geomBuffer);
+    std::function<char*(size_t)> binningFunc = resizeFunctional(binningBuffer);
+    std::function<char*(size_t)> pointFunc = resizeFunctional(pointBuffer);
+    std::function<char*(size_t)> point_binningFunc = resizeFunctional(point_binningBuffer);
+    std::function<char*(size_t)> tileFunc = resizeFunctional(tileBuffer);
+
+    int rendered = 0;
+    int valid_points = 0;
+    if (P != 0 && PN != 0) 
+	{
+        int2 n = CudaRasterizer::Rasterizer::sampleDepth(
+            geomFunc,
+            binningFunc,
+            pointFunc,
+            point_binningFunc,
+            tileFunc,
+            PN, P,
+            W, H,
+            points3D.contiguous().data_ptr<float>(),
+            means3D.contiguous().data_ptr<float>(),
+            opacity.contiguous().data_ptr<float>(),
+            scales.contiguous().data_ptr<float>(),
+            scale_modifier,
+            rotations.contiguous().data_ptr<float>(),
+            cov3D_precomp.contiguous().data_ptr<float>(),
+            viewmatrix.contiguous().data_ptr<float>(),
+            projmatrix.contiguous().data_ptr<float>(),
+            campos.contiguous().data_ptr<float>(),
+            tan_fovx,
+            tan_fovy,
+            kernel_size,
+            prefiltered,
+            output.contiguous().data_ptr<float>(),
+            inside.contiguous().data_ptr<bool>(),
+            debug);
+        rendered     = n.x;
+        valid_points = n.y;
+    }
+    return std::make_tuple(rendered, valid_points, output, inside, geomBuffer, binningBuffer, pointBuffer, point_binningBuffer, tileBuffer);
+}
+
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+SampleRasterizedDepthBackwardCUDA(
+    const torch::Tensor& points3D,
+    const torch::Tensor& means3D,
+    const torch::Tensor& opacity,
+    const torch::Tensor& scales,
+    const torch::Tensor& rotations,
+    const float scale_modifier,
+    const torch::Tensor& cov3D_precomp,
+    const torch::Tensor& viewmatrix,
+    const torch::Tensor& projmatrix,
+    const torch::Tensor& dL_doutput,
+    const float tan_fovx,
+    const float tan_fovy,
+    const float kernel_size,
+    const int image_height,
+    const int image_width,
+    const torch::Tensor& campos,
+    const torch::Tensor& geomBuffer,
+    const torch::Tensor& binningBuffer,
+    const torch::Tensor& pointBuffer,
+    const torch::Tensor& pointBinningBuffer,
+    const torch::Tensor& tileBuffer,
+    int R, int RN,
+    const bool prefiltered,
+    const bool debug) 
+{
+    const int PN = points3D.numel() / 3;
+    const int P = means3D.size(0);
+
+    auto float_opts = means3D.options().dtype(torch::kFloat32);
+    torch::Tensor dL_dmeans3D = torch::zeros({P, 3}, means3D.options());
+    torch::Tensor dL_dmeans2D = torch::zeros({P, 3}, means3D.options());
+    torch::Tensor dL_dopacity = torch::zeros({P, 1}, means3D.options());
+    torch::Tensor dL_dcov3D = torch::zeros({P, 6}, means3D.options());
+    torch::Tensor dL_dscales = torch::zeros({P, 3}, means3D.options());
+    torch::Tensor dL_drotations = torch::zeros({P, 4}, means3D.options());
+    torch::Tensor dL_dpoint3D = torch::zeros_like(points3D);
+    torch::Tensor dL_dpoint2D = torch::zeros({PN, 2}, means3D.options());
+
+    torch::Device device(torch::kCUDA);
+    torch::TensorOptions options(torch::kByte);
+    torch::Tensor geomBwdBuffer = torch::empty({0}, options.device(device));
+    std::function<char*(size_t)> geomFunc = resizeFunctional<true>(geomBwdBuffer);
+	
+    if (P != 0 && PN != 0) 
+	{
+        CudaRasterizer::Rasterizer::sample_depth_backward(
+            geomFunc,
+            PN, P, RN, R,
+            image_width, image_height,
+            points3D.contiguous().data_ptr<float>(),
+            means3D.contiguous().data_ptr<float>(),
+            opacity.contiguous().data_ptr<float>(),
+            scales.contiguous().data_ptr<float>(),
+            scale_modifier,
+            rotations.contiguous().data_ptr<float>(),
+            cov3D_precomp.contiguous().data_ptr<float>(),
+            viewmatrix.contiguous().data_ptr<float>(),
+            projmatrix.contiguous().data_ptr<float>(),
+            campos.contiguous().data_ptr<float>(),
+            tan_fovx,
+            tan_fovy,
+            kernel_size,
+            reinterpret_cast<char*>(geomBuffer.contiguous().data_ptr()),
+            reinterpret_cast<char*>(binningBuffer.contiguous().data_ptr()),
+            reinterpret_cast<char*>(pointBuffer.contiguous().data_ptr()),
+            reinterpret_cast<char*>(pointBinningBuffer.contiguous().data_ptr()),
+            reinterpret_cast<char*>(tileBuffer.contiguous().data_ptr()),
+            dL_doutput.contiguous().data_ptr<float>(),
+            dL_dmeans2D.contiguous().data_ptr<float>(),
+            dL_dpoint2D.contiguous().data_ptr<float>(),
+            dL_dopacity.contiguous().data_ptr<float>(),
+            dL_dmeans3D.contiguous().data_ptr<float>(),
+            dL_dcov3D.contiguous().data_ptr<float>(),
+            dL_dscales.contiguous().data_ptr<float>(),
+            dL_drotations.contiguous().data_ptr<float>(),
+            dL_dpoint3D.contiguous().data_ptr<float>(),
+            debug);
+    }
+    return std::make_tuple(dL_dopacity, dL_dmeans3D, dL_dcov3D, dL_dscales, dL_drotations, dL_dpoint3D);
+}

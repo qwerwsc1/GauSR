@@ -76,3 +76,50 @@ torch::Tensor markVisible(
 		torch::Tensor& means3D,
 		torch::Tensor& viewmatrix,
 		torch::Tensor& projmatrix);
+
+std::tuple<int, int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+SampleRasterizedDepthCUDA(
+    const torch::Tensor& points3D,
+    const torch::Tensor& means3D,
+    const torch::Tensor& opacity,
+    const torch::Tensor& scales,
+    const torch::Tensor& rotations,
+    const float scale_modifier,
+    const torch::Tensor& cov3D_precomp,
+    const torch::Tensor& viewmatrix,
+    const torch::Tensor& projmatrix,
+    const float tan_fovx,
+    const float tan_fovy,
+    const float kernel_size,
+    const int image_height,
+    const int image_width,
+    const torch::Tensor& campos,
+    const bool prefiltered,
+    const bool debug);
+
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+SampleRasterizedDepthBackwardCUDA(
+    const torch::Tensor& points3D,
+    const torch::Tensor& means3D,
+    const torch::Tensor& opacity,
+    const torch::Tensor& scales,
+    const torch::Tensor& rotations,
+    const float scale_modifier,
+    const torch::Tensor& cov3D_precomp,
+    const torch::Tensor& viewmatrix,
+    const torch::Tensor& projmatrix,
+    const torch::Tensor& dL_doutput,
+    const float tan_fovx,
+    const float tan_fovy,
+    const float kernel_size,
+    const int image_height,
+    const int image_width,
+    const torch::Tensor& campos,
+    const torch::Tensor& geomBuffer,
+    const torch::Tensor& binningBuffer,
+    const torch::Tensor& pointBuffer,
+    const torch::Tensor& pointBinningBuffer,
+    const torch::Tensor& imageBuffer,
+    int R, int RN,
+    const bool prefiltered,
+    const bool debug);
