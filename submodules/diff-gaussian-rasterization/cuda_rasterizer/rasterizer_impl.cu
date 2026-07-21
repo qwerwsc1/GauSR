@@ -850,7 +850,7 @@ void CudaRasterizer::Rasterizer::sample_depth_backward(
     // Take care of the rest of preprocessing. Was the precomputed covariance
     // given to us or a scales/rot pair? If precomputed, pass that. If not,
     // use the one we computed ourselves.
-    // const float* cov3D_ptr = (cov3D_precomp != nullptr) ? cov3D_precomp : geomState.cov3D;
+    const float* cov3D_ptr = (cov3D_precomp != nullptr) ? cov3D_precomp : geomState.cov3D;
 	CHECK_CUDA(BACKWARD::preprocess(
 		P, 0, 0,
 		(float3*)means3D,
@@ -861,7 +861,7 @@ void CudaRasterizer::Rasterizer::sample_depth_backward(
 		(glm::vec3*)scales,
 		(float4*)rotations,
 		scale_modifier,
-		cov3D_precomp,
+		cov3D_ptr,
 		viewmatrix,
 		projmatrix,
 		focal_x, focal_y,
