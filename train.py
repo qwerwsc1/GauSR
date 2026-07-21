@@ -57,6 +57,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     viewpoint_stack = None
     ema_loss_for_log = 0.0
     ema_normal_loss_for_log = 0.0
+    ema_ncc_loss_for_log = 0.0
     os.makedirs(os.path.join(dataset.model_path, "debug"), exist_ok=True)
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
@@ -149,10 +150,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # Progress bar
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
             ema_normal_loss_for_log = 0.4 * depth_normal_loss.item() + 0.6 * ema_normal_loss_for_log
+            ema_ncc_loss_for_log = 0.4 * ncc_loss.item() + 0.6 * ema_ncc_loss_for_log
             if iteration % 10 == 0:
                 progress_bar.set_postfix({
                     "Loss": f"{ema_loss_for_log:.{7}f}",
-                    "loss_normal": f"{ema_normal_loss_for_log:.{4}f}"})
+                    "loss_normal": f"{ema_normal_loss_for_log:.{4}f}",
+                    "loss_ncc": f"{ema_ncc_loss_for_log:.{4}f}"})
                 progress_bar.update(10)
             if iteration == opt.iterations:
                 # record training time
