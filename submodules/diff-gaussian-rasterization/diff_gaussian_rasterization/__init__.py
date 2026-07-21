@@ -279,6 +279,7 @@ class _SampleDepth(torch.autograd.Function):
             raster_settings.image_width,
             raster_settings.campos,
             raster_settings.prefiltered,
+            # raster_settings.required_depth,
             raster_settings.debug,
         )
 
@@ -342,6 +343,7 @@ class _SampleDepth(torch.autograd.Function):
             num_rendered,
             num_points,
             raster_settings.prefiltered,
+            raster_settings.required_depth,
             raster_settings.debug,
         )
 

@@ -79,7 +79,8 @@ namespace BACKWARD
 		float* dL_dsh,
 		float* dL_dopacity,
 		glm::vec3* dL_dscale,
-		glm::vec4* dL_drot);
+		glm::vec4* dL_drot,
+		bool require_depth);
 }
 
 #endif

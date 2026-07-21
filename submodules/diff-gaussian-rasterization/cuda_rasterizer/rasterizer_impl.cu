@@ -554,7 +554,8 @@ void CudaRasterizer::Rasterizer::backward(
 		dL_dsh,
 		dL_dopacity,
 		(glm::vec3*)dL_dscale,
-		(glm::vec4*)dL_drot
+		(glm::vec4*)dL_drot,
+		require_depth
 	), debug)
 }
 
@@ -801,6 +802,7 @@ void CudaRasterizer::Rasterizer::sample_depth_backward(
     float* dL_dscale,
     float* dL_drot,
     float* dL_dpoint,
+	bool require_depth,
     bool debug) 
 {
     GeometryState geomState = GeometryState::fromChunk(geom_buffer, P);
@@ -878,7 +880,8 @@ void CudaRasterizer::Rasterizer::sample_depth_backward(
 		nullptr,
 		dL_dopacity,
 		(glm::vec3*)dL_dscale,
-		(glm::vec4*)dL_drot
+		(glm::vec4*)dL_drot,
+		require_depth
 	), debug)
 
     CHECK_CUDA(BACKWARD::preprocess_points(

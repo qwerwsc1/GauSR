@@ -278,6 +278,7 @@ SampleRasterizedDepthCUDA(
     const int image_width,
     const torch::Tensor& campos,
     const bool prefiltered,
+	// const bool require_depth,
     const bool debug) 
 {
     if (means3D.ndimension() != 2 || means3D.size(1) != 3) 
@@ -373,6 +374,7 @@ SampleRasterizedDepthBackwardCUDA(
     const torch::Tensor& tileBuffer,
     int R, int RN,
     const bool prefiltered,
+	const bool require_depth,
     const bool debug) 
 {
     const int PN = points3D.numel() / 3;
@@ -426,6 +428,7 @@ SampleRasterizedDepthBackwardCUDA(
             dL_dscales.contiguous().data_ptr<float>(),
             dL_drotations.contiguous().data_ptr<float>(),
             dL_dpoint3D.contiguous().data_ptr<float>(),
+			require_depth,
             debug);
     }
     return std::make_tuple(dL_dopacity, dL_dmeans3D, dL_dcov3D, dL_dscales, dL_drotations, dL_dpoint3D);
