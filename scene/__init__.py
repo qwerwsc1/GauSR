@@ -14,12 +14,12 @@ import random
 import json
 import torch
 import numpy as np
-from utils.system_utils import searchForMaxIteration
 from scene.dataset_readers import sceneLoadTypeCallbacks
 from scene.gaussian_model import GaussianModel
 from arguments import ModelParams
 from scene.cameras import Camera
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
+from utils.system_utils import searchForMaxIteration
 
 class Scene:
 
@@ -64,9 +64,9 @@ class Scene:
             with open(os.path.join(self.model_path, "cameras.json"), 'w') as file:
                 json.dump(json_cams, file)
 
-        if shuffle:
-            random.shuffle(scene_info.train_cameras)  # Multi-res consistent random shuffling
-            random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
+        # if shuffle:
+        #     random.shuffle(scene_info.train_cameras)  # Multi-res consistent random shuffling
+        #     random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
 
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
