@@ -117,6 +117,12 @@ class Scene:
             self.gaussians.load_ply(os.path.join(self.model_path, "point_cloud","iteration_" + str(self.loaded_iter), "point_cloud.ply"))
         else:
             self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
+            with torch.no_grad():
+                for camera_center in camera_centers_list:
+                    dists_cam_gauss = torch.norm(self.gaussians.get_xyz - camera_center[None, :], dim=1)
+                    max_scale = 0.05 * dists_cam_gauss.flatten()
+                    log_max_scale = torch.log(max_scale).repeat(3, 1).permute(1, 0)
+                    self.gaussians._scaling[:] = torch.clamp_max(self.gaussians._scaling, log_max_scale)
 
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
