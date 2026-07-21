@@ -16,6 +16,7 @@ from math import exp
 from scene import GaussianModel, Camera
 from gaussian_renderer import sample_depth
 import warp_patch_ncc
+from fused_ssim import fused_ssim
 
 def l1_loss(network_output, gt):
     return torch.abs((network_output - gt)).mean()
@@ -34,14 +35,15 @@ def create_window(window_size, channel):
     return window
 
 def ssim(img1, img2, window_size=11, size_average=True):
-    channel = img1.size(-3)
-    window = create_window(window_size, channel)
+    # channel = img1.size(-3)
+    # window = create_window(window_size, channel)
 
-    if img1.is_cuda:
-        window = window.cuda(img1.get_device())
-    window = window.type_as(img1)
+    # if img1.is_cuda:
+    #     window = window.cuda(img1.get_device())
+    # window = window.type_as(img1)
 
-    return _ssim(img1, img2, window, window_size, channel, size_average)
+    # return _ssim(img1, img2, window, window_size, channel, size_average)
+    return fused_ssim(img1, img2, padding="valid")
 
 def _ssim(img1, img2, window, window_size, channel, size_average=True):
     mu1 = F.conv2d(img1, window, padding=window_size // 2, groups=channel)
