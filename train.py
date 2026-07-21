@@ -93,9 +93,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         # depth-normal consistency Loss
         if require_reg and opt.lambda_depth_normal > 0:
-            rendered_expected_depth: torch.Tensor = render_pkg["expected_depth"]
-            rendered_median_depth: torch.Tensor = render_pkg["median_depth"]
-            rendered_normal: torch.Tensor = render_pkg["normal"]
+            rendered_expected_depth = render_pkg["expected_depth"]
+            rendered_median_depth = render_pkg["median_depth"]
+            rendered_normal = render_pkg["normal"]
             if 0.0 < dataset.depth_ratio < 1.0:
                 depth_normal = depth_double_to_normal(viewpoint_cam, rendered_expected_depth, rendered_median_depth)
                 normal_error_map = 1 - torch.linalg.vecdot(rendered_normal.unsqueeze(0), depth_normal, dim=1)
@@ -110,7 +110,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             depth_normal_loss = torch.tensor([0], dtype=torch.float32, device="cuda")
 
        # patch match loss
-        if require_reg and opt.lambda_multi_view_ncc > 0:
+        if require_reg and opt.lambda_multi_view_ncc > 1000:
             nearest_cam = None if len(viewpoint_cam.nearest_id) == 0 else scene.getTrainCameras()[sample(viewpoint_cam.nearest_id, 1)[0]]
             ncc_loss, geo_loss = patchmatch(gaussians, render_pkg, viewpoint_cam, nearest_cam, iteration, depth_normal)
         else:
