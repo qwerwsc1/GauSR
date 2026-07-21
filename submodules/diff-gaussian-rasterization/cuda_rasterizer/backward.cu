@@ -246,7 +246,6 @@ __global__ void computeCov2DCUDA(
 
 	glm::mat3 T = W * J;
 
-
     glm::mat3 cov_cam_inv;
 
     glm::mat3 Vrk_inv;
@@ -649,8 +648,8 @@ __global__ void preprocessCUDA(
 		computeColorFromSH(idx, D, M, (glm::vec3*)means, *campos, shs, clamped, (glm::vec3*)dL_dcolor, (glm::vec3*)dL_dmeans, (glm::vec3*)dL_dsh);
 
 	// Compute gradient updates due to computing covariance from scale/rotation
-	// if (scales)
-	// 	computeCov3D(idx, scales[idx], scale_modifier, rotations[idx], dL_dcov3D, dL_dscale, dL_drot);
+	if (scales)
+		computeCov3D(idx, scales[idx], scale_modifier, rotations[idx], dL_dcov3D, dL_dscale, dL_drot);
 }
 
 // Backward version of the rendering procedure.
