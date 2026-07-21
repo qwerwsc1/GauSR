@@ -528,10 +528,11 @@ __global__ void computeCov2DCUDA(
 
 // Backward pass for the conversion of scale and rotation to a 
 // 3D covariance matrix for each Gaussian. 
-__device__ void computeCov3D(int idx, const glm::vec3 scale, float mod, const glm::vec4 rot, const float* dL_dcov3Ds, glm::vec3* dL_dscales, glm::vec4* dL_drots)
+__device__ void computeCov3D(int idx, const glm::vec3 scale, float mod, const float4 rot, const float* dL_dcov3Ds, glm::vec3* dL_dscales, glm::vec4* dL_drots)
 {
 	// Recompute (intermediate) results for the 3D covariance computation.
-	glm::vec4 q = rot;// / glm::length(rot);
+	// glm::vec4 q = glm::vec4(rot.x, rot.y, rot.z, rot.w);// / glm::length(rot);
+	float4 q = rot;
 	float r = q.x;
 	float x = q.y;
 	float y = q.z;
@@ -589,8 +590,9 @@ __device__ void computeCov3D(int idx, const glm::vec3 scale, float mod, const gl
 	dL_dq.w = 2 * r * (dL_dMt[0][1] - dL_dMt[1][0]) + 2 * x * (dL_dMt[2][0] + dL_dMt[0][2]) + 2 * y * (dL_dMt[1][2] + dL_dMt[2][1]) - 4 * z * (dL_dMt[1][1] + dL_dMt[0][0]);
 
 	// Gradients of loss w.r.t. unnormalized quaternion
-	float4* dL_drot = (float4*)(dL_drots + idx);
-	*dL_drot = float4{ dL_dq.x, dL_dq.y, dL_dq.z, dL_dq.w };//dnormvdv(float4{ rot.x, rot.y, rot.z, rot.w }, float4{ dL_dq.x, dL_dq.y, dL_dq.z, dL_dq.w });
+	// float4* dL_drot = (float4*)(dL_drots + idx);
+	// *dL_drot = float4{ dL_dq.x, dL_dq.y, dL_dq.z, dL_dq.w };//dnormvdv(float4{ rot.x, rot.y, rot.z, rot.w }, float4{ dL_dq.x, dL_dq.y, dL_dq.z, dL_dq.w });
+	dL_drots[idx] = glm::vec4(dL_dq.x, dL_dq.y, dL_dq.z, dL_dq.w);
 }
 
 // Backward pass of the preprocessing steps, except
