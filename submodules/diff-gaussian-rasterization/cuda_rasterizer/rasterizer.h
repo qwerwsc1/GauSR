@@ -14,6 +14,7 @@
 
 #include <vector>
 #include <functional>
+#include <vector>
 
 namespace CudaRasterizer
 {

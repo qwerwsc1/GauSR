@@ -11,8 +11,8 @@
 
 import os
 import torch
-from random import randint
-from utils.loss_utils import l1_loss, ssim
+from random import randint, sample
+from utils.loss_utils import l1_loss, ssim, PatchMatch
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
@@ -50,6 +50,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     # fix problem
     trainCameras = scene.getTrainCameras().copy()
     gaussians.compute_3D_filter(cameras=trainCameras)
+
+    if opt.lambda_multi_view_ncc > 0 or opt.lambda_multi_view_geo > 0:
+        patchmatch = PatchMatch(opt.multi_view_patch_size, opt.multi_view_pixel_noise_th, kernel_size=kernel_size, pipe=pipe, model_path=dataset.model_path)
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
@@ -105,7 +108,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         else:
             depth_normal_loss = torch.tensor([0], dtype=torch.float32, device="cuda")
 
-        loss = rgb_loss + opt.lambda_depth_normal * depth_normal_loss
+       # patch match loss
+        if require_reg and opt.lambda_multi_view_ncc > 0:
+            nearest_cam = None if len(viewpoint_cam.nearest_id) == 0 else scene.getTrainCameras()[sample(viewpoint_cam.nearest_id, 1)[0]]
+            ncc_loss, geo_loss = patchmatch(gaussians, render_pkg, viewpoint_cam, nearest_cam, iteration, depth_normal)
+        else:
+            ncc_loss = torch.tensor([0], dtype=torch.float32, device="cuda")
+            geo_loss = torch.tensor([0], dtype=torch.float32, device="cuda")
+
+        loss = rgb_loss + opt.lambda_depth_normal * depth_normal_loss + opt.lambda_multi_view_ncc * ncc_loss + opt.lambda_multi_view_geo * geo_loss
 
         if iteration % 200 == 0 and require_reg:
             import cv2

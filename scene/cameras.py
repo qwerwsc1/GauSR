@@ -28,6 +28,7 @@ class Camera(nn.Module):
         self.T = T
         self.FoVx = FoVx
         self.FoVy = FoVy
+        self.nearest_id = []
         self.image_name = image_name
 
         try:
@@ -41,6 +42,7 @@ class Camera(nn.Module):
         self.T = torch.tensor(T, dtype=torch.float32).cuda()
 
         self.original_image = image.clamp(0.0, 1.0).to(self.data_device)
+        self.gray_image = (0.299 * image[0] + 0.587 * image[1] + 0.114 * image[2])[None].to(self.data_device)
         self.image_width = self.original_image.shape[2]
         self.image_height = self.original_image.shape[1]
 

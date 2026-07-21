@@ -29,6 +29,8 @@ namespace cg = cooperative_groups;
 #include "auxiliary.h"
 #include "forward.h"
 #include "backward.h"
+#include "sample_backward.h"
+#include "sample_forward.h"
 
 // Helper function to find the next-highest bit of the MSB
 // on the CPU.
@@ -110,6 +112,39 @@ __global__ void duplicateWithKeys(
 			}
 		}
 	}
+}
+
+__global__ void createWithKeys(
+    int P,
+    const float2* points_xy,
+    const float* depths,
+    const uint32_t* offsets,
+    const uint32_t* tiles_touched,
+    uint64_t* points_keys_unsorted,
+    uint32_t* points_values_unsorted,
+    dim3 grid) 
+{
+    auto idx = cg::this_grid().thread_rank();
+    if (idx >= P)
+        return;
+
+    // Generate no key/value pair for invisible Points
+    if (tiles_touched[idx] > 0) 
+	{
+        // Find this Point's offset in buffer for writing keys/values.
+        uint32_t off = (idx == 0) ? 0 : offsets[idx - 1];
+
+        // determine the tile that the point is in
+        const float2 p = points_xy[idx];
+        int x = min(grid.x - 1, max((int)0, (int)((p.x + 0.5f) / BLOCK_X)));
+        int y = min(grid.y - 1, max((int)0, (int)((p.y + 0.5f) / BLOCK_Y)));
+
+        uint64_t key = y * grid.x + x;
+        key <<= 32;
+        // key |= *((uint32_t*)&depths[idx]);
+        points_keys_unsorted[off] = key;
+        points_values_unsorted[off] = idx;
+    }
 }
 
 // Check keys to see if it is at the start/end of one tile's range in 
@@ -204,6 +239,28 @@ CudaRasterizer::BinningState CudaRasterizer::BinningState::fromChunk(char*& chun
 		binning.point_list_unsorted, binning.point_list, P);
 	obtain(chunk, binning.list_sorting_space, binning.sorting_size, 128);
 	return binning;
+}
+
+CudaRasterizer::PointState CudaRasterizer::PointState::fromChunk(char*& chunk, size_t P) {
+    PointState geom;
+    obtain(chunk, geom.depths, P, 128);
+    obtain(chunk, geom.points2D, P, 128);
+    obtain(chunk, geom.tiles_touched, P, 128);
+    obtain(chunk, geom.n_contrib, P, 128);
+    obtain(chunk, geom.accum_depth, P, 128);
+    obtain(chunk, geom.final_T, P, 128);
+    cub::DeviceScan::InclusiveSum(nullptr, geom.scan_size, geom.tiles_touched, geom.tiles_touched, P);
+    obtain(chunk, geom.scanning_space, geom.scan_size, 128);
+    obtain(chunk, geom.point_offsets, P, 128);
+    // obtain(chunk, geom.n_contrib, P, 128);
+    return geom;
+}
+
+CudaRasterizer::TileState CudaRasterizer::TileState::fromChunk(char*& chunk, size_t N) {
+    TileState tiles;
+    obtain(chunk, tiles.gaussian_ranges, N, 128);
+    obtain(chunk, tiles.point_ranges, N, 128);
+    return tiles;
 }
 
 // Forward rendering procedure for differentiable rasterization
@@ -497,7 +554,8 @@ void CudaRasterizer::Rasterizer::backward(
 		dL_dsh,
 		dL_dopacity,
 		(glm::vec3*)dL_dscale,
-		(glm::vec4*)dL_drot), debug)
+		(glm::vec4*)dL_drot
+	), debug)
 }
 
 int2 CudaRasterizer::Rasterizer::sampleDepth(
@@ -524,12 +582,13 @@ int2 CudaRasterizer::Rasterizer::sampleDepth(
     const bool prefiltered,
     float* output,
     bool* inside,
-    bool debug) {
+    bool debug) 
+{
     const float focal_y = height / (2.0f * tan_fovy);
     const float focal_x = width / (2.0f * tan_fovx);
 
-    size_t chunk_size       = required<GeometryState>(P);
-    char* chunkptr          = geometryBuffer(chunk_size);
+    size_t chunk_size = required<GeometryState>(P);
+    char* chunkptr = geometryBuffer(chunk_size);
     GeometryState geomState = GeometryState::fromChunk(chunkptr, P);
 
     int* radii = geomState.internal_radii;
@@ -539,20 +598,20 @@ int2 CudaRasterizer::Rasterizer::sampleDepth(
 
     // Dynamically resize image-based auxiliary buffers during training
     size_t tile_chunk_size = required<TileState>(tile_grid.x * tile_grid.y);
-    char* tile_chunkptr    = tileBuffer(tile_chunk_size);
-    TileState tileState    = TileState::fromChunk(tile_chunkptr, tile_grid.x * tile_grid.y);
+    char* tile_chunkptr = tileBuffer(tile_chunk_size);
+    TileState tileState = TileState::fromChunk(tile_chunkptr, tile_grid.x * tile_grid.y);
 
 	CHECK_CUDA(FORWARD::preprocess(
-		P, D, M,
+		P, 0, 0,
 		means3D,
 		(glm::vec3*)scales,
 		scale_modifier,
 		(float4*)rotations,
 		opacities,
-		shs,
+		nullptr,
 		geomState.clamped,
 		cov3D_precomp,
-		colors_precomp,
+		geomState.rgb,
 		viewmatrix, projmatrix,
 		(glm::vec3*)cam_pos,
 		width, height,
@@ -582,7 +641,7 @@ int2 CudaRasterizer::Rasterizer::sampleDepth(
     CHECK_CUDA(cudaMemcpy(&num_rendered, geomState.point_offsets + P - 1, sizeof(int), cudaMemcpyDeviceToHost), debug);
 
     size_t binning_chunk_size = required<BinningState>(num_rendered);
-    char* binning_chunkptr    = binningBuffer(binning_chunk_size);
+    char* binning_chunkptr = binningBuffer(binning_chunk_size);
     BinningState binningState = BinningState::fromChunk(binning_chunkptr, num_rendered);
 
     // For each instance to be rendered, produce adequate [ tile | depth ] key
@@ -602,12 +661,12 @@ int2 CudaRasterizer::Rasterizer::sampleDepth(
 
     // Sort complete list of (duplicated) Gaussian indices by keys
     CHECK_CUDA(cub::DeviceRadixSort::SortPairs(
-                   binningState.list_sorting_space,
-                   binningState.sorting_size,
-                   binningState.point_list_keys_unsorted, binningState.point_list_keys,
-                   binningState.point_list_unsorted, binningState.point_list,
-                   num_rendered, 0, 32 + bit),
-               debug)
+		binningState.list_sorting_space,
+		binningState.sorting_size,
+		binningState.point_list_keys_unsorted, binningState.point_list_keys,
+		binningState.point_list_unsorted, binningState.point_list,
+		num_rendered, 0, 32 + bit),
+	debug)
 
     CHECK_CUDA(cudaMemset(tileState.gaussian_ranges, 0, tile_grid.x * tile_grid.y * sizeof(uint2)), debug);
 
@@ -622,24 +681,24 @@ int2 CudaRasterizer::Rasterizer::sampleDepth(
     /**************************************** Integrate ****************************************/
     // create a list of points similar to the list of gaussians
     size_t point_chunk_size = required<PointState>(PN);
-    char* point_chunkptr    = pointBuffer(point_chunk_size);
-    PointState pointState   = PointState::fromChunk(point_chunkptr, PN);
+    char* point_chunkptr = pointBuffer(point_chunk_size);
+    PointState pointState = PointState::fromChunk(point_chunkptr, PN);
 
     // Run preprocessing per-Point (transformation)
     CHECK_CUDA(FORWARD::preprocess_points(
-                   PN,
-                   points3D,
-                   viewmatrix, projmatrix,
-                   (glm::vec3*)cam_pos,
-                   width, height,
-                   focal_x, focal_y,
-                   tan_fovx, tan_fovy,
-                   pointState.points2D,
-                   pointState.depths,
-                   tile_grid,
-                   pointState.tiles_touched,
-                   prefiltered),
-               debug)
+		PN,
+		points3D,
+		viewmatrix, projmatrix,
+		(glm::vec3*)cam_pos,
+		width, height,
+		focal_x, focal_y,
+		tan_fovx, tan_fovy,
+		pointState.points2D,
+		pointState.depths,
+		tile_grid,
+		pointState.tiles_touched,
+		prefiltered
+	), debug)
 
     // Compute prefix sum over full list of touched tile counts by Gaussians
     // E.g., [2, 3, 0, 2, 1] -> [2, 5, 5, 7, 8]
@@ -668,12 +727,12 @@ int2 CudaRasterizer::Rasterizer::sampleDepth(
 
     //  Sort complete list of (duplicated) Gaussian indices by keys
     CHECK_CUDA(cub::DeviceRadixSort::SortPairs(
-                   point_binningState.list_sorting_space,
-                   point_binningState.sorting_size,
-                   point_binningState.point_list_keys_unsorted, point_binningState.point_list_keys,
-                   point_binningState.point_list_unsorted, point_binningState.point_list,
-                   num_evaluation, 0, 32 + bit),
-               debug);
+		point_binningState.list_sorting_space,
+		point_binningState.sorting_size,
+		point_binningState.point_list_keys_unsorted, point_binningState.point_list_keys,
+		point_binningState.point_list_unsorted, point_binningState.point_list,
+		num_evaluation, 0, 32 + bit),
+	debug);
 
     // if (DEBUG_INTEGRATE && PRINT_INTEGRATE_INFO){
     // 	printf("in CudaRasterizer::Rasterizer::integrate, after my sorting num_evaluation: %d point_binning_chunk_size: %d\n", num_evaluation, point_binning_chunk_size);
@@ -690,23 +749,23 @@ int2 CudaRasterizer::Rasterizer::sampleDepth(
     CHECK_CUDA(, debug)
 
     CHECK_CUDA(FORWARD::sampleDepth(
-                   tile_grid, block,
-                   tileState.gaussian_ranges,
-                   tileState.point_ranges,
-                   binningState.point_list,
-                   point_binningState.point_list,
-                   width, height,
-                   focal_x, focal_y,
-                   pointState.points2D,
-                   geomState.means2D,
-                   geomState.ray_planes,
-                   geomState.conic_opacity,
-                   pointState.n_contrib,
-                   pointState.accum_depth,
-                   pointState.final_T,
-                   (float3*)output,
-                   inside),
-               debug)
+		tile_grid, block,
+		tileState.gaussian_ranges,
+		tileState.point_ranges,
+		binningState.point_list,
+		point_binningState.point_list,
+		width, height,
+		focal_x, focal_y,
+		pointState.points2D,
+		geomState.means2D,
+		geomState.ray_planes,
+		geomState.conic_opacity,
+		pointState.n_contrib,
+		pointState.accum_depth,
+		pointState.final_T,
+		(float3*)output,
+		inside
+	), debug)
 
     return {num_rendered, num_evaluation};
 }
@@ -793,16 +852,16 @@ void CudaRasterizer::Rasterizer::sample_depth_backward(
     // use the one we computed ourselves.
     // const float* cov3D_ptr = (cov3D_precomp != nullptr) ? cov3D_precomp : geomState.cov3D;
 	CHECK_CUDA(BACKWARD::preprocess(
-		P, D, M,
+		P, 0, 0,
 		(float3*)means3D,
 		opacities,
 		radii,
-		shs,
+		nullptr,
 		geomState.clamped,
 		(glm::vec3*)scales,
 		(float4*)rotations,
 		scale_modifier,
-		cov3D_ptr,
+		cov3D_precomp,
 		viewmatrix,
 		projmatrix,
 		focal_x, focal_y,
@@ -814,9 +873,9 @@ void CudaRasterizer::Rasterizer::sample_depth_backward(
 		geomBwdState.ray_planes,
 		geomBwdState.normals,
 		(glm::vec3*)dL_dmean3D,
-		dL_dcolor,
+		nullptr,
 		dL_dcov3D,
-		dL_dsh,
+		nullptr,
 		dL_dopacity,
 		(glm::vec3*)dL_dscale,
 		(glm::vec4*)dL_drot

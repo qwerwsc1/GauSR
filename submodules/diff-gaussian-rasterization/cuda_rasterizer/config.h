@@ -16,5 +16,6 @@
 #define BLOCK_X 16
 #define BLOCK_Y 16
 #define NORMALIZE_EPS 1.0E-12F
+#define SAMPLE_BATCH_SIZE 2
 
 #endif

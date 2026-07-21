@@ -74,6 +74,29 @@ namespace CudaRasterizer
 		static BinningState fromChunk(char*& chunk, size_t P);
 	};
 
+	struct PointState 
+	{
+		size_t scan_size;
+		float* depths;
+		float2* points2D;
+		uint32_t* n_contrib;
+		float* accum_depth;
+		float* final_T;
+		char* scanning_space;
+		uint32_t* point_offsets;
+		uint32_t* tiles_touched;
+
+		static PointState fromChunk(char*& chunk, size_t P);
+	};
+
+	struct TileState
+	{
+		uint2* gaussian_ranges;
+		uint2* point_ranges;
+
+		static TileState fromChunk(char*& chunk, size_t P);
+	};
+
 	template<typename T> 
 	size_t required(size_t P)
 	{

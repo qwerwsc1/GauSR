@@ -57,6 +57,11 @@ class ModelParams(ParamGroup):
         self.kernel_size = 0.0 # Size of 2D filter in mip-splatting
         
         self.depth_ratio = 0.0
+
+        self.multi_view_num = 8
+        self.multi_view_max_angle = 30
+        self.multi_view_min_dis = 0.01
+        self.multi_view_max_dis = 1.5
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -93,6 +98,10 @@ class OptimizationParams(ParamGroup):
         self.random_background = False
 
         self.regularization_from_iter = 7_000
+        self.lambda_multi_view_geo = 0.02
+        self.lambda_multi_view_ncc = 0.3
+        self.multi_view_patch_size = 3
+        self.multi_view_pixel_noise_th = 1.0
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):
