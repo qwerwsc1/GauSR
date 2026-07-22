@@ -1,0 +1,7 @@
+Output folder: /media/wangsc/T7/outputs/gausr/dtu [22/07 14:14:40]
+Reading camera 49/49 [22/07 14:14:40]
+Loading Training Cameras [22/07 14:14:40]
+Loading Test Cameras [22/07 14:14:45]
+computing nearest_id [22/07 14:14:45]
+Number of points at initialisation :  11911 [22/07 14:14:45]
+Training progress:   0%|                                                                                        | 0/30000 [00:00<?, ?it/s]
