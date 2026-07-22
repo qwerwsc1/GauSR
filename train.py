@@ -107,7 +107,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             depth_normal_loss = torch.tensor([0], dtype=torch.float32, device="cuda")
 
        # patch match loss
-        if require_reg and opt.lambda_multi_view_ncc > 1000:
+        if require_reg and opt.lambda_multi_view_ncc > 0:
             nearest_cam = None if len(viewpoint_cam.nearest_id) == 0 else scene.getTrainCameras()[sample(viewpoint_cam.nearest_id, 1)[0]]
             ncc_loss, geo_loss = patchmatch(gaussians, render_pkg, viewpoint_cam, nearest_cam, iteration, depth_normal)
         else:
