@@ -825,7 +825,7 @@ renderCUDA(
 			const float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
 
 			const float G = exp(power);
-			const float alpha = min(0.99f, con_o.w * G);
+			const float alpha = 1.f - expf(-con_o.w * G); // min(0.99f, con_o.w * G);
 
             valid = !(done || (contributor >= last_contributor) || (power > 0.0f) || (alpha < 1.0f / 255.0f));
             if (!warp.any(valid))
@@ -901,6 +901,7 @@ renderCUDA(
 				// the background color is added if nothing left to blend
 				dL_dopa += -T_final / (1.f - alpha) * dL_dfinalT;
 
+				dL_dopa *= expf(-con_o.w * G);
 				// Helpful reusable temporary variables
 				const float dL_dG = con_o.w * dL_dopa;
 				const float gdx = G * d.x;

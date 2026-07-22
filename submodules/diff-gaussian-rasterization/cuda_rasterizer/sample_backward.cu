@@ -212,7 +212,7 @@ __global__ void __launch_bounds__(BLOCK_X* BLOCK_Y)
                     const float2 d = {xy.x - point_xy[p].x, xy.y - point_xy[p].y};
                     float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
                     G[p] = expf(power);
-                    float alpha = fminf(0.99f, con_o.w * G[p]);
+                    float alpha = 1.f - expf(-con_o.w * G[p]); // fminf(0.99f, con_o.w * G[p]);
                     valid[p] = !((contributor >= last_contributor[p]) || (power > 0.0f) || (alpha < 1.0f / 255.0f));
                     any_valid = any_valid || valid[p];
                 }
@@ -229,7 +229,7 @@ __global__ void __launch_bounds__(BLOCK_X* BLOCK_Y)
                     if (valid[p]) 
                     {
                         const float2 d = {xy.x - point_xy[p].x, xy.y - point_xy[p].y};
-                        float alpha = fminf(0.99f, con_o.w * G[p]);
+                        float alpha = 1.f - expf(-con_o.w * G[p]); // fminf(0.99f, con_o.w * G[p]);
                         T[p] = T[p] / (1.f - alpha);
                         const float blending_weight = alpha * T[p];
 
@@ -248,6 +248,7 @@ __global__ void __launch_bounds__(BLOCK_X* BLOCK_Y)
                         dL_dray_planes_local.x += dL_dt * d.x;
                         dL_dray_planes_local.y += dL_dt * d.y;
 
+                        dL_dopa *= expf(-con_o.w * G[p]);
                         // Helpful reusable temporary variables
                         const float dL_dG = con_o.w * dL_dopa;
                         const float gdx = G[p] * d.x;
