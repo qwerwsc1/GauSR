@@ -164,7 +164,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background, kernel_size))
+            training_report(iteration, loss, rgb_loss, depth_normal_loss, ncc_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background, kernel_size), use_wandb)
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
@@ -212,10 +212,10 @@ def prepare_output_and_logger(args):
     with open(os.path.join(args.model_path, "cfg_args"), 'w') as cfg_log_f:
         cfg_log_f.write(str(Namespace(**vars(args))))
 
-def training_report(iteration, Ll1, loss, l1_loss, normal_loss, ncc_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, use_wandb):
+def training_report(iteration, loss, rgb_loss, normal_loss, ncc_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, use_wandb):
     if use_wandb and wandb is not None:
         wandb.log({
-            "train_loss_patches/l1_loss": Ll1.item(),
+            "train_loss_patches/l1_loss": rgb_loss.item(),
             "train_loss_patches/depth_normal_loss": normal_loss.item(),
             "train_loss_patches/ncc_loss": ncc_loss.item(),
             "train_loss_patches/total_loss": loss.item(),
@@ -264,7 +264,7 @@ if __name__ == "__main__":
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
+    parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[15_000])
     parser.add_argument("--start_checkpoint", type=str, default = None)
     # additional argument for using wandb
     parser.add_argument("--use_wandb", action='store_true', default=False, help="Use wandb to record loss value")
