@@ -267,7 +267,7 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
     # additional argument for using wandb
-    parser.add_argument("--use_wandb", action='store_true', default=True, help="Use wandb to record loss value")
+    parser.add_argument("--use_wandb", action='store_true', default=False, help="Use wandb to record loss value")
     parser.add_argument("--wandb_project", type=str, default="gssr", help="Wandb project name")
     parser.add_argument("--wandb_entity", type=str, default="GauSR", help="Wandb entity/team name")
     parser.add_argument("--run_name", type=str, default="dtu", help="Wandb run name")
