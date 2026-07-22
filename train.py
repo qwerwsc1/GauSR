@@ -153,7 +153,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             ema_ncc_loss_for_log = 0.4 * ncc_loss.item() + 0.6 * ema_ncc_loss_for_log
             if iteration % 10 == 0:
                 progress_bar.set_postfix({
-                    "Loss": f"{ema_loss_for_log:.{7}f}",
+                    "Loss": f"{ema_loss_for_log:.{4}f}",
                     "loss_normal": f"{ema_normal_loss_for_log:.{4}f}",
                     "loss_ncc": f"{ema_ncc_loss_for_log:.{4}f}"})
                 progress_bar.update(10)
