@@ -199,7 +199,7 @@ if __name__ == "__main__":
     parser.add_argument("--skip_test", action="store_true")
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument('--scan_id', type=str,  help='scan id of the input mesh')
-    parser.add_argument('--DTU', type=str,  default='/home/wangsc/Documents/datasets/dtu_dataset/dtu_eval/', help='path to the GT DTU point clouds')
+    parser.add_argument('--DTU', type=str,  default='/home/wangsc/Documents/datasets/translab/', help='path to the GT DTU point clouds')
     
     args = get_combined_args(parser)
     print("evaluating " + args.model_path)
