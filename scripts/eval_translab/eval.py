@@ -194,15 +194,15 @@ if __name__ == '__main__':
     pbar.set_description('done')
     pbar.close()
     over_all = (mean_d2s + mean_s2d) / 2
-    print("mean_d2s:{}, mean_s2d:{}, over_all:{}".format(mean_d2s * 1000, mean_s2d * 1000, over_all * 1000))
+    print("mean_d2s:{}, mean_s2d:{}, over_all:{}".format(mean_d2s, mean_s2d, over_all))
     print("precision:{}, recall:{}, f1_score:{}".format(precision, recall, f1_score))
     
     import json
     with open(f'{args.vis_out_dir}/results_{os.path.basename(args.data).split("_")[-1].split(".")[0]}.json', 'w') as fp:
         json.dump({
-            'mean_d2s': mean_d2s * 1000,
-            'mean_s2d': mean_s2d * 1000,
-            'overall': over_all * 1000,
+            'mean_d2s': mean_d2s,
+            'mean_s2d': mean_s2d,
+            'overall': over_all,
             'precision': precision,
             'recall': recall,
             'f1_score': f1_score,
