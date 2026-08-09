@@ -382,7 +382,7 @@ renderCUDA(
     float2 pixf = {static_cast<float>(pix.x), static_cast<float>(pix.y)};
     const float2 pixnf = {(pixf.x - static_cast<float>(W - 1) / 2.f) / focal_x, (pixf.y - static_cast<float>(H - 1) / 2.f) / focal_y};
     const float rln = rnorm3df(pixnf.x, pixnf.y, 1.f);
-
+	const bool center_pixel = (pix.x == W/2) &&(pix.y == H/2);
 	// Check if this thread is associated with a valid pixel or outside.
 	bool inside = pix.x < W&& pix.y < H;
 	// Done threads can help with fetching, but don't rasterize
@@ -464,6 +464,7 @@ renderCUDA(
 			float alpha = 1.f - expf(-con_o.w * exp(power)); // min(0.99f, con_o.w * exp(power));
 			if (alpha < 1.0f / 255.0f)
 				continue;
+
 			float test_T = T * (1 - alpha);
 			if (test_T < 0.0001f)
 			{

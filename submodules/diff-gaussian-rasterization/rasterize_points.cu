@@ -260,6 +260,115 @@ torch::Tensor markVisible(
 	return present;
 }
 
+std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor>
+IntegrateGaussiansToPointsCUDA(
+    const torch::Tensor& background,
+    const torch::Tensor& points3D,
+    const torch::Tensor& means3D,
+    const torch::Tensor& colors,
+    const torch::Tensor& opacity,
+    const torch::Tensor& scales,
+    const torch::Tensor& rotations,
+    const float scale_modifier,
+    const torch::Tensor& cov3D_precomp,
+    const torch::Tensor& view2gaussian_precomp,
+    const torch::Tensor& viewmatrix,
+    const torch::Tensor& projmatrix,
+    const float tan_fovx,
+    const float tan_fovy,
+    const float kernel_size,
+    const int image_height,
+    const int image_width,
+    const torch::Tensor& sh,
+    const int degree,
+    const torch::Tensor& campos,
+    const bool prefiltered,
+    const bool debug) 
+{
+    if (means3D.ndimension() != 2 || means3D.size(1) != 3) 
+	{
+        AT_ERROR("means3D must have dimensions (num_points, 3)");
+    }
+    if (points3D.ndimension() != 2 || points3D.size(1) != 3) 
+	{
+        AT_ERROR("points3D must have dimensions (num_points, 3)");
+    }
+
+    const int PN = points3D.size(0);
+    const int P = means3D.size(0);
+    const int H = image_height;
+    const int W = image_width;
+
+    auto int_opts = means3D.options().dtype(torch::kInt32);
+    auto float_opts = means3D.options().dtype(torch::kFloat32);
+
+    torch::Tensor out_color_integrated = torch::full({PN, 3}, 0.0, float_opts); // not implemented yet
+    torch::Tensor out_alpha_integrated = torch::full({PN}, 0.0, float_opts);
+    torch::Tensor inside = torch::full({PN}, 0, means3D.options().dtype(torch::kBool));
+    torch::Tensor condition = torch::full({PN}, 0.0, means3D.options().dtype(torch::kBool));
+    torch::Tensor ray_sigma = torch::full({P}, 0.0, float_opts);
+    torch::Tensor radii = torch::full({P}, 0, means3D.options().dtype(torch::kInt32));
+
+    torch::Device device(torch::kCUDA);
+    torch::TensorOptions options(torch::kByte);
+    torch::Tensor geomBuffer = torch::empty({0}, options.device(device));
+    torch::Tensor binningBuffer = torch::empty({0}, options.device(device));
+    torch::Tensor pointBuffer = torch::empty({0}, options.device(device));
+    torch::Tensor point_binningBuffer = torch::empty({0}, options.device(device));
+    torch::Tensor tileBuffer = torch::empty({0}, options.device(device));
+
+    std::function<char*(size_t)> geomFunc = resizeFunctional(geomBuffer);
+    std::function<char*(size_t)> binningFunc = resizeFunctional(binningBuffer);
+    std::function<char*(size_t)> pointFunc = resizeFunctional(pointBuffer);
+    std::function<char*(size_t)> point_binningFunc = resizeFunctional(point_binningBuffer);
+    std::function<char*(size_t)> tileFunc = resizeFunctional(tileBuffer);
+
+    int rendered = 0;
+    if (P != 0 && PN != 0) 
+	{
+        int M = 0;
+        if (sh.size(0) != 0) 
+		{
+            M = sh.size(1);
+        }
+
+        rendered = CudaRasterizer::Rasterizer::integrate(
+            geomFunc,
+            binningFunc,
+            pointFunc,
+            point_binningFunc,
+            tileFunc,
+            PN, P, degree, M,
+            background.contiguous().data_ptr<float>(),
+            W, H,
+            points3D.contiguous().data_ptr<float>(),
+            means3D.contiguous().data_ptr<float>(),
+            sh.contiguous().data_ptr<float>(),
+            colors.contiguous().data_ptr<float>(),
+            opacity.contiguous().data_ptr<float>(),
+            scales.contiguous().data_ptr<float>(),
+            scale_modifier,
+            rotations.contiguous().data_ptr<float>(),
+            cov3D_precomp.contiguous().data_ptr<float>(),
+            view2gaussian_precomp.contiguous().data_ptr<float>(),
+            viewmatrix.contiguous().data_ptr<float>(),
+            projmatrix.contiguous().data_ptr<float>(),
+            campos.contiguous().data_ptr<float>(),
+            tan_fovx,
+            tan_fovy,
+            kernel_size,
+            prefiltered,
+            ray_sigma.contiguous().data_ptr<float>(),
+            out_color_integrated.contiguous().data_ptr<float>(),
+            out_alpha_integrated.contiguous().data_ptr<float>(),
+            inside.contiguous().data_ptr<bool>(),
+            radii.contiguous().data_ptr<int>(),
+            condition.contiguous().data_ptr<bool>(),
+            debug);
+    }
+    return std::make_tuple(rendered, out_color_integrated, out_alpha_integrated, inside);
+}
+
 std::tuple<int, int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 SampleRasterizedDepthCUDA(
     const torch::Tensor& points3D,

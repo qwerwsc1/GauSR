@@ -24,6 +24,25 @@ namespace FORWARD
         const dim3 grid,
         uint32_t* tiles_touched,
         bool prefiltered);
+        
+    void integrate(
+        const dim3 grid, dim3 block,
+        const uint2* gaussian_ranges,
+        const uint2* point_ranges,
+        const uint32_t* gaussian_list,
+        const uint32_t* point_list,
+        int W, int H,
+        float focal_x, float focal_y,
+        const float2* points2D,
+        const float2* gaussians2D,
+        const float* colors,
+        const float4* ray_planes,
+        const float* point_depths,
+        const float4* conic_opacity,
+        const float* bg_color,
+        float* out_color,
+        float* out_alpha,
+        bool* inside);
 
     void sampleDepth(
         const dim3 grid, dim3 block,

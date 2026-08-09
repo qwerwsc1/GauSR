@@ -12,9 +12,9 @@
             "console": "integratedTerminal",
             "args": [
                 "-s",
-                "/home/wangsc/Documents/datasets/translab/scene_01",
+                "/media/wangsc/T7/datasets/dtu_dataset/dtu/scan24",
                 "-m",
-                "/home/wangsc/Documents/outputs/translab/scene_01",
+                "/home/wangsc/Documents/outputs/test/sca",
                 "-r",
                 "2"
             ]

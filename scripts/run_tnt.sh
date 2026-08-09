@@ -1,0 +1,13 @@
+dataset_folder=/home/wangsc/Documents/datasets/tnt_dataset/
+output_folder=/media/data/SurR/outputs/gausr/tnt-mvg-aspt
+scenes=(Barn Caterpillar Ignatius Meetingroom Truck Courthouse)
+move_cpus=(0 0 1 1 1 1)
+devices=(cuda cuda cuda cuda cuda cuda)
+
+for idx in "${!scenes[@]}"; do
+    scene="${scenes[$idx]}"
+    device="${devices[$idx]}"
+    python train.py -s ${dataset_folder}/${scene} -m ${output_folder}/${scene} -r 2 --data_device ${device}
+    python mesh_extract_tetrahedra.py -m ${output_folder}/${scene} --use_depth_filter
+    python scripts/eval_tnt/run.py --dataset-dir ${dataset_folder}/${scene} --traj-path ${dataset_folder}/${scene}/${scene}_COLMAP_SfM.log --ply-path ${output_folder}/${scene}/recon_post.ply --out-dir ${output_folder}/${scene}/mesh
+done
