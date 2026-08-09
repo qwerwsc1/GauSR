@@ -1,5 +1,5 @@
 dataset_folder=/home/wangsc/Documents/datasets/tnt_dataset/
-output_folder=/media/data/SurR/outputs/gausr/tnt-mvg-aspt
+output_folder=/media/data/SurR/outputs/gausr/tnt-mvg-aspt/
 scenes=(Barn Caterpillar Ignatius Meetingroom Truck Courthouse)
 move_cpus=(0 0 1 1 1 1)
 devices=(cuda cuda cuda cuda cuda cuda)
