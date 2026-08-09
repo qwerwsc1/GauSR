@@ -21,6 +21,8 @@ from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
 
+import trimesh
+
 class GaussianModel:
 
     def setup_functions(self):
@@ -281,6 +283,30 @@ class GaussianModel:
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
 
+    @torch.no_grad()
+    def get_tetra_points(self):
+        M = trimesh.creation.box()
+        M.vertices *= 2
+
+        rots = build_rotation(self._rotation)
+        xyz = self.get_xyz
+        scale = self.get_scaling_with_3D_filter * 3.0
+
+        vertices = M.vertices.T
+        vertices = torch.from_numpy(vertices).float().cuda().unsqueeze(0).repeat(xyz.shape[0], 1, 1)
+        # scale vertices first
+        vertices = vertices * scale.unsqueeze(-1)
+        vertices = torch.bmm(rots, vertices).squeeze(-1) + xyz.unsqueeze(-1)
+        vertices = vertices.permute(0, 2, 1).reshape(-1, 3).contiguous()
+        # concat center points
+        vertices = torch.cat([vertices, xyz], dim=0)
+
+        # scale is not a good solution but use it for now
+        scale = scale.max(dim=-1, keepdim=True)[0]
+        scale_corner = scale.repeat(1, 8).reshape(-1, 1)
+        vertices_scale = torch.cat([scale_corner, scale], dim=0)
+        return vertices, vertices_scale
+    
     def reset_opacity(self):
         # reset opacity to by considering 3D filter
         current_opacity_with_filter = self.get_opacity_with_3D_filter
