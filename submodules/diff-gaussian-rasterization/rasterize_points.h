@@ -68,6 +68,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	const int R,
 	const torch::Tensor& binningBuffer,
 	const torch::Tensor& imageBuffer,
+    const torch::Tensor& tileBuffer,
 	const torch::Tensor& alpha,
     const bool require_depth,
 	const bool debug);
