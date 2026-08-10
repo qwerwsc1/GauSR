@@ -191,7 +191,7 @@ __global__ void computeCov2DCUDA(
 	const float* view_matrix,
 	const float4* dL_dconics,
 	const float4* dL_dray_planes,
-    const float4* dL_dnormals,
+    const glm::vec3* dL_dnormals,
 	glm::vec3* dL_dmeans,
 	float* dL_dcov,
 	float* dL_dopacity)
@@ -204,8 +204,7 @@ __global__ void computeCov2DCUDA(
 	// intermediate forward results needed in the backward.
 	float3 mean = means[idx];
 	float4 dL_dconic = dL_dconics[idx];
-	float4 dL_dnormal4 = dL_dnormals[idx];
-    glm::vec3 dL_dnormal = {dL_dnormal4.x, dL_dnormal4.y, dL_dnormal4.z};
+    const glm::vec3 dL_dnormal = dL_dnormals[idx];
 
 	auto load_ray_plane_grad = [h_x, h_y](const float4* dL_dray_planes, auto idx) 
 	{
@@ -667,7 +666,7 @@ renderCUDA(
 	const float4* __restrict__ conic_opacity,
 	const float* __restrict__ colors,
 	const float4* __restrict__ ray_planes,		// from radegs
-	const float4* __restrict__ normals,			// from radegs
+	const float3* __restrict__ normals,			// from radegs
 	// const float* __restrict__ final_Ts,
 	const float* __restrict__ alphas,			// from radegs
 	const float* __restrict__ accum_depth,		// from radegs
@@ -686,7 +685,7 @@ renderCUDA(
 	// float* __restrict__ dL_dopacity,
 	float* __restrict__ dL_dcolors,				// from radegs
 	float4* __restrict__ dL_dray_planes,		// from radegs
-	float4* __restrict__ dL_dnormals)			// from radegs
+	float3* __restrict__ dL_dnormals)			// from radegs
 {
 	// We rasterize again. Compute necessary block info.
 	auto block = cg::this_thread_block();
@@ -712,7 +711,7 @@ renderCUDA(
 	__shared__ float2 collected_xy[BLOCK_SIZE];
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
 	__shared__ float collected_colors[C * BLOCK_SIZE];
-    [[maybe_unused]] __shared__ float3 collected_ray_planes[BLOCK_SIZE];
+    [[maybe_unused]] __shared__ float4 collected_ray_planes[BLOCK_SIZE];
     [[maybe_unused]] __shared__ float3 collected_normals[BLOCK_SIZE];
 
 	// In the forward, we stored the final value for T, the
@@ -799,10 +798,8 @@ renderCUDA(
 
 			if constexpr (GEOMETRY) 
 			{
-                float4 ray_plane = ray_planes[coll_id];
-                float4 normal = normals[coll_id];
-                collected_ray_planes[block.thread_rank()] = {ray_plane.x, ray_plane.y, ray_plane.z};
-                collected_normals[block.thread_rank()] = {normal.x, normal.y, normal.z};
+                collected_ray_planes[block.thread_rank()] = ray_planes[coll_id];
+                collected_normals[block.thread_rank()] = normals[coll_id];
             }
 		}
 		block.sync();
@@ -812,7 +809,6 @@ renderCUDA(
 		{
 			// Keep track of current Gaussian ID. Skip, if this one
 			// is behind the last contributor for this pixel.
-			bool valid;
 
 			contributor--;
 			// if (contributor >= last_contributor)
@@ -827,7 +823,7 @@ renderCUDA(
 			const float G = exp(power);
 			const float alpha = 1.f - expf(-con_o.w * G); // min(0.99f, con_o.w * G);
 
-            valid = !(done || (contributor >= last_contributor) || (power > 0.0f) || (alpha < 1.0f / 255.0f));
+            bool valid = !(done || (contributor >= last_contributor) || (power > 0.0f) || (alpha < 1.0f / 255.0f));
             if (!warp.any(valid))
                 continue;
 
@@ -846,7 +842,7 @@ renderCUDA(
 				// gradients w.r.t. alpha (blending factor for a Gaussian/pixel
 				// pair).
 				float dL_dopa = 0.0f;
-				const int global_id = collected_id[j];
+				// const int global_id = collected_id[j];
 				for (int ch = 0; ch < C; ch++)
 				{
 					const float c = collected_colors[ch * BLOCK_SIZE + j];
@@ -864,7 +860,7 @@ renderCUDA(
 				}
 
 				[[maybe_unused]] float dL_dt;
-                [[maybe_unused]] float3 ray_plane;
+                [[maybe_unused]] float4 ray_plane;
 
                 if constexpr (GEOMETRY) 
 				{
@@ -991,7 +987,7 @@ void BACKWARD::preprocess(
 	const float3* dL_dmean2D,
 	const float4* dL_dconic,
 	const float4* dL_dray_plane,
-    const float4* dL_dnormals,
+    const float3* dL_dnormals,
 	glm::vec3* dL_dmean3D,
 	const float* dL_dcolor,
 	float* dL_dcov3D,
@@ -1019,7 +1015,7 @@ void BACKWARD::preprocess(
 		viewmatrix,
 		dL_dconic,
 		dL_dray_plane,
-        dL_dnormals,
+        (const glm::vec3*)dL_dnormals,
 		dL_dmean3D,
 		dL_dcov3D,
 		dL_dopacity);
@@ -1059,7 +1055,7 @@ void BACKWARD::render(
 	const float4* conic_opacity,
 	const float* colors,
 	const float4* ray_planes,
-    const float4* normals,
+    const float3* normals,
     const float* alphas,
     const float* accum_depth,
     const float* normal_length,
@@ -1078,7 +1074,7 @@ void BACKWARD::render(
 	// float* dL_dopacity,
 	float* dL_dcolors,
 	float4* dL_dray_planes,
-    float4* dL_dnormals,
+    float3* dL_dnormals,
     bool require_depth)
 {
 	if (require_depth)

@@ -30,7 +30,7 @@ namespace BACKWARD
 		const float4* conic_opacity,
 		const float* colors,
 		const float4* ray_planes,
-		const float4* normals,
+		const float3* normals,
 		const float* alphas,
 		const float* accum_depth,
 		const float* normal_length,
@@ -49,7 +49,7 @@ namespace BACKWARD
 		// float* dL_dopacity,
 		float* dL_dcolors,
 		float4* dL_dray_planes,
-		float4* dL_dnormals,
+		float3* dL_dnormals,
 		bool require_depth);
 
 	void preprocess(
@@ -72,7 +72,7 @@ namespace BACKWARD
 		const float3* dL_dmean2D,
 		const float4* dL_dconics,
 		const float4* dL_dray_plane,
-    	const float4* dL_dnormals,
+    	const float3* dL_dnormals,
 		glm::vec3* dL_dmeans,
 		const float* dL_dcolor,
 		float* dL_dcov3D,

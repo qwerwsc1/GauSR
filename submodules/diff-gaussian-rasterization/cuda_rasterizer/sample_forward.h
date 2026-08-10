@@ -24,9 +24,11 @@ namespace FORWARD
         const dim3 grid,
         uint32_t* tiles_touched,
         bool prefiltered);
-        
-    void integrate(
-        const dim3 grid, dim3 block,
+
+    void evaluateSDF(
+        const int num_duplicated_tiles,
+        const uint32_t* tile_ids,
+        const uint32_t* tile_offsets,
         const uint2* gaussian_ranges,
         const uint2* point_ranges,
         const uint32_t* gaussian_list,
@@ -34,16 +36,53 @@ namespace FORWARD
         int W, int H,
         float focal_x, float focal_y,
         const float2* points2D,
+        const float* point_ts,
         const float2* gaussians2D,
-        const float* colors,
-        const float4* ray_planes,
-        const float* point_depths,
         const float4* conic_opacity,
-        const float* bg_color,
-        float* out_color,
-        float* out_alpha,
+        const float4* ray_planes,
+        const float3* normals,
+        float* median_depth,
+        float* output,
+        bool* inside_output);
+
+    void evaluateTransmittance(
+        const int num_duplicated_tiles,
+        const uint32_t* tile_ids,
+        const uint32_t* tile_offsets,
+        const uint2* gaussian_ranges,
+        const uint2* point_ranges,
+        const uint32_t* gaussian_list,
+        const uint32_t* point_list,
+        int W, int H,
+        float focal_x, float focal_y,
+        const float2* points2D,
+        const float* point_depths,
+        const float2* gaussians2D,
+        const float4* conic_opacity,
+        const float4* ray_planes,
+        const float3* normals,
+        float* out_transmittance,
         bool* inside);
 
+    void evaluateColor(
+        const int num_duplicated_tiles,
+        const uint32_t* tile_ids,
+        const uint32_t* tile_offsets,
+        const uint2* gaussian_ranges,
+        const uint2* point_ranges,
+        const uint32_t* gaussian_list,
+        const uint32_t* point_list,
+        int W, int H,
+        float focal_x, float focal_y,
+        const float2* points2D,
+        const float* point_depths,
+        const float2* gaussians2D,
+        const float4* conic_opacity,
+        const float* colors,
+        const float* bg_color,
+        float* out_color,
+        bool* inside);
+        
     void sampleDepth(
         const dim3 grid, dim3 block,
         const uint2* gaussian_ranges,

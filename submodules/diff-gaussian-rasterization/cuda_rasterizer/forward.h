@@ -44,7 +44,7 @@ namespace FORWARD
 		float* depths,
 		float* cov3Ds,
 		float4* ray_planes,			// ray_planes from radegs
-		float4* normals,			// normals from radegs
+		float3* normals,			// normals from radegs
 		float* rgb,
 		float4* conic_opacity,
 		const dim3 grid,
@@ -62,7 +62,7 @@ namespace FORWARD
 		const float* colors,
 		const float4* conic_opacity,
 		const float4* ray_planes,
-		const float4* normals,
+		const float3* normals,
 		const float focal_x,
 		const float focal_y,
 		// float* final_T,

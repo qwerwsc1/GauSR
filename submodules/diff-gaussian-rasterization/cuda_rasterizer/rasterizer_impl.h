@@ -31,7 +31,7 @@ namespace CudaRasterizer
 		size_t scan_size;
 		float* depths;
 		float4* ray_planes;
-    	float4* normals;
+    	float3* normals;
 		char* scanning_space;
 		bool* clamped;
 		int* internal_radii;
@@ -48,7 +48,7 @@ namespace CudaRasterizer
 	struct GeometryBwdState
 	{
 		float4* ray_planes;
-		float4* normals;
+		float3* normals;
 		float4* conic_opacity;
 		static GeometryBwdState fromChunk(char*& chunk, size_t P);
 	};
@@ -89,12 +89,33 @@ namespace CudaRasterizer
 		static PointState fromChunk(char*& chunk, size_t P);
 	};
 
-	struct TileState
-	{
+	template <bool SAMPLE>
+	struct TileState;
+
+	template<>
+	struct TileState<true> {
+		size_t scan_size;
 		uint2* gaussian_ranges;
 		uint2* point_ranges;
+		uint32_t* tile_rounds;
+		uint32_t* tile_offsets;
+		char* scanning_space;
 
-		static TileState fromChunk(char*& chunk, size_t P);
+		static TileState<true> fromChunk(char*& chunk, size_t N);
+	};
+
+	template<>
+	struct TileState<false> {
+		uint2* gaussian_ranges;
+		uint32_t* max_contributor;
+
+		static TileState<false> fromChunk(char*& chunk, size_t N);
+	};
+
+	struct DuplicatedTileState {
+		uint32_t* tile_id;
+		uint32_t* max_contributor;
+		static DuplicatedTileState fromChunk(char*& chunk, size_t P);
 	};
 
 	template<typename T> 

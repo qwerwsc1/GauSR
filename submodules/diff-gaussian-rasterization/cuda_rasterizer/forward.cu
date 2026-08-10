@@ -73,7 +73,7 @@ __device__ glm::vec3 computeColorFromSH(int idx, int deg, int max_coeffs, const 
 template <bool INTE = false>
 // Forward version of 2D covariance matrix computation
 __device__ __forceinline__ bool computeCov2D(const float3& mean, float focal_x, float focal_y, float tan_fovx, float tan_fovy, float kernel_size, const float* cov3D, const float* viewmatrix, float* cov2D,
-											 float4* normal, float4* ray_plane, float& coef)
+											 float3* normal, float4* ray_plane, float& coef)
 {
 	// The following models the steps outlined by equations 29
 	// and 31 in "EWA Splatting" (Zwicker et al., 2002). 
@@ -158,11 +158,7 @@ __device__ __forceinline__ bool computeCov2D(const float3& mean, float focal_x, 
     glm::vec3 uvh_m = cov_cam_inv * uvh;
     glm::vec3 uvh_mn = glm::normalize(uvh_m);
 
-	if (isnan(uvh_mn.x)) 
 	{
-		*ray_plane = {0};
-		*normal = {0, 0, -1, 0};
-	} else {
 		float u2 = txtz * txtz;
 		float v2 = tytz * tytz;
 		float uv = txtz * tytz;
@@ -189,7 +185,7 @@ __device__ __forceinline__ bool computeCov2D(const float3& mean, float focal_x, 
 		glm::vec3 cam_normal_vector = nJ * ray_normal_vector;
 		glm::vec3 normal_vector = glm::normalize(cam_normal_vector);
 
-		*normal = {normal_vector.x, normal_vector.y, normal_vector.z, 0.f};
+		*normal = {normal_vector.x, normal_vector.y, normal_vector.z};
 	}
     // }
     return well_conditioned;
@@ -259,7 +255,7 @@ __global__ void preprocessCUDA(
 	float* depths,
 	float* cov3Ds,
 	float4* ray_planes,	// from radegs
-    float4* normals,	// from radegs
+    float3* normals,	// from radegs
 	float* rgb,
 	float4* conic_opacity,
 	const dim3 grid,
@@ -358,7 +354,7 @@ renderCUDA(
 	const float* __restrict__ features,
 	const float4* __restrict__ conic_opacity,
 	const float4* __restrict__ ray_planes,
-	const float4* __restrict__ normals,
+	const float3* __restrict__ normals,
 	const float focal_x,
 	const float focal_y,
 	// float* __restrict__ final_T,
@@ -398,7 +394,7 @@ renderCUDA(
 	__shared__ float2 collected_xy[BLOCK_SIZE];
 	__shared__ float collected_feature[BLOCK_SIZE * CHANNELS];
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
-	[[maybe_unused]] __shared__ float3 collected_ray_planes[BLOCK_SIZE];
+	[[maybe_unused]] __shared__ float4 collected_ray_planes[BLOCK_SIZE];
     [[maybe_unused]] __shared__ float3 collected_normals[BLOCK_SIZE];
 
 	// Initialize helper variables
@@ -426,18 +422,14 @@ renderCUDA(
 		if (range.x + progress < range.y)
 		{
 			int coll_id = point_list[range.x + progress];
-			// collected_id[block.thread_rank()] = coll_id;
 			collected_xy[block.thread_rank()] = points_xy_image[coll_id];
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
 			for (int ch = 0; ch < CHANNELS; ch++)
                 collected_feature[ch * BLOCK_SIZE + block.thread_rank()] = features[coll_id * CHANNELS + ch];
 			if constexpr (GEOMETRY) {
-                float4 ray_plane = ray_planes[coll_id];
-                float4 normal = normals[coll_id];
-                collected_ray_planes[block.thread_rank()] = {ray_plane.x, ray_plane.y, ray_plane.z};
-                collected_normals[block.thread_rank()] = {normal.x, normal.y, normal.z};
+                collected_ray_planes[block.thread_rank()] = ray_planes[coll_id];
+                collected_normals[block.thread_rank()] = normals[coll_id];
 			}
-
 		}
 		block.sync();
 
@@ -478,7 +470,7 @@ renderCUDA(
 			
 			if constexpr (GEOMETRY) 
 			{
-				float3 ray_plane = collected_ray_planes[j];
+				float4 ray_plane = collected_ray_planes[j];
 				float3 normal = collected_normals[j];
 				float t = ray_plane.x * d.x + ray_plane.y * d.y + ray_plane.z;
 				Depth += t * alpha * T;
@@ -536,7 +528,7 @@ void FORWARD::render(
 	const float* colors,
 	const float4* conic_opacity,
 	const float4* ray_planes,
-    const float4* normals,
+    const float3* normals,
     const float focal_x,
     const float focal_y,
 	// float* final_T,
@@ -618,7 +610,7 @@ void FORWARD::preprocess(
 	float* depths,
 	float* cov3Ds,
 	float4* ray_planes,
-	float4* normals,
+	float3* normals,
 	float* rgb,
 	float4* conic_opacity,
 	const dim3 grid,
