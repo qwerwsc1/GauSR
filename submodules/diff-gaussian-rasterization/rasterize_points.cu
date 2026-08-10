@@ -132,7 +132,7 @@ RasterizeGaussiansCUDA(
 			require_depth,
 			debug);
 	}
-	return std::make_tuple(rendered, out_color, out_alpha, out_normal, out_depth, out_mdepth, radii, geomBuffer, binningBuffer, imgBuffer);
+	return std::make_tuple(rendered, out_color, out_alpha, out_normal, out_depth, out_mdepth, radii, geomBuffer, binningBuffer, imgBuffer, tileBuffer);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
