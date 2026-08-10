@@ -317,7 +317,7 @@ def extract_mesh(
     num_cluster: int,
 ):
     with torch.no_grad():
-        gaussians = GaussianModel(dataset.sh_degree, dataset.sg_degree)
+        gaussians = GaussianModel(dataset.sh_degree)
         scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
         kernel_size = dataset.kernel_size
         bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
