@@ -895,7 +895,7 @@ renderCUDA(
 			const float intV = sigma2 * (cdfV2 - cdfV1);
 			const float G = M_2PIf * intU * intV;
 
-			const float alpha = 1.f - expf(-con_o.w * G); // min(0.99f, con_o.w * G);
+			const float alpha = min(0.99f, con_o.w * G); // 1.f - expf(-con_o.w * G); // min(0.99f, con_o.w * G);
 
             bool valid = !(done || (contributor >= last_contributor) || (alpha < 1.0f / 255.0f));
             if (!warp.any(valid))
@@ -971,7 +971,7 @@ renderCUDA(
 				// the background color is added if nothing left to blend
 				dL_dopa += -T_final / (1.f - alpha) * dL_dfinalT;
 
-				dL_dopa *= expf(-con_o.w * G);
+				// dL_dopa *= expf(-con_o.w * G);
 
 				// NOTE: please refer to the supplement for chain-rule details
 				/* Here is the backward of eigenvalue decomposition */

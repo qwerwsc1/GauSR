@@ -491,7 +491,7 @@ renderCUDA(
 			// Obtain alpha by multiplying with Gaussian opacity
 			// and its exponential falloff from mean.
 			// Avoid numerical instabilities (see paper appendix). 
-			float alpha = 1.f - expf(-con_o.w * exp(integral)); // min(0.99f, con_o.w * exp(power));
+			float alpha = min(0.99f, con_o.w * exp(power)); // 1.f - expf(-con_o.w * exp(integral)); // min(0.99f, con_o.w * exp(power));
 			if (alpha < 1.0f / 255.0f)
 				continue;
 
