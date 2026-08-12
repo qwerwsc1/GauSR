@@ -44,7 +44,7 @@ __forceinline__ __device__ float ndc2Pix(float v, int S)
 	return ((v + 1.0) * S - 1.0) * 0.5;
 }
 
-__forceinline__ __device__ void getRect(const float2 p, int max_radius, uint2& rect_min, uint2& rect_max, dim3 grid)
+__forceinline__ __device__ void getRect(const float3 p, int max_radius, uint2& rect_min, uint2& rect_max, dim3 grid)
 {
 	rect_min = {
 		min(grid.x, max((int)0, (int)((p.x - max_radius) / BLOCK_X))),
@@ -162,6 +162,14 @@ __forceinline__ __device__ bool in_frustum(
 		return false;
 	}
 	return true;
+}
+
+__forceinline__ __device__ float approxCdf(float x) {
+	// NOTE: there conduct the same results (tanh(x) = 2 * sigmoid(2x) - 1). The tanh operation is faster than exp.
+	const float val = 1.6f * x + 0.07f * x * x * x;
+	// float denom = 1.0f + expf(-val);
+	// return 1.0f / (denom);
+	return tanh(0.5f * val) * 0.5f + 0.5f;
 }
 
 namespace glm_modification 

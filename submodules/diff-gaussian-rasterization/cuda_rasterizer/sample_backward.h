@@ -31,7 +31,7 @@ namespace BACKWARD
         int W, int H,
         float focal_x, float focal_y,
         const float2* points2D,
-        const float2* gaussians2D,
+        const float3* gaussians2D,
         const float4* ray_planes,
         const float4* conic_opacity,
         const uint32_t* n_contrib,

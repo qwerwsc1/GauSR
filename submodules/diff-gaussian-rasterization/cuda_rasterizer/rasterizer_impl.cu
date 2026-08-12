@@ -73,7 +73,7 @@ __global__ void checkFrustum(
 // Run once per Gaussian (1:N mapping).
 __global__ void duplicateWithKeys(
 	int P,
-	const float2* points_xy,
+	const float3* points_xy,
 	const float* depths,
 	const uint32_t* offsets,
 	uint64_t* gaussian_keys_unsorted,
@@ -221,6 +221,8 @@ CudaRasterizer::GeometryState CudaRasterizer::GeometryState::fromChunk(char*& ch
 	obtain(chunk, geom.depths, P, 128);
 	obtain(chunk, geom.ray_planes, P, 128);
     obtain(chunk, geom.normals, P, 128);
+    obtain(chunk, geom.lambda_sigma, P, 128);
+	obtain(chunk, geom.nv1_nv2, P, 128);
 	obtain(chunk, geom.clamped, P * 3, 128);
 	obtain(chunk, geom.internal_radii, P, 128);
 	obtain(chunk, geom.means2D, P, 128);
@@ -394,6 +396,8 @@ int CudaRasterizer::Rasterizer::forward(
 		geomState.cov3D,
 		geomState.ray_planes,
 		geomState.normals,
+        geomState.lambda_sigma,
+        geomState.nv1_nv2,
 		geomState.rgb,
 		geomState.conic_opacity,
 		tile_grid,
@@ -459,6 +463,8 @@ int CudaRasterizer::Rasterizer::forward(
 		geomState.conic_opacity,
 		geomState.ray_planes,
 		geomState.normals,
+        geomState.lambda_sigma,
+        geomState.nv1_nv2,
 		focal_x, focal_y,
 		// imgState.accum_alpha,
 		imgState.n_contrib,
@@ -556,6 +562,8 @@ void CudaRasterizer::Rasterizer::backward(
 		color_ptr,
 		geomState.ray_planes,
 		geomState.normals,
+        geomState.lambda_sigma,
+		geomState.nv1_nv2,
 		alphas,
 		imgState.accum_depth,
 		imgState.normal_length,
@@ -676,6 +684,8 @@ int CudaRasterizer::Rasterizer::evaluateTransmittance(
 		geomState.cov3D,
 		geomState.ray_planes,
 		geomState.normals,
+        geomState.lambda_sigma,
+        geomState.nv1_nv2,
 		geomState.rgb,
 		geomState.conic_opacity,
 		tile_grid,
@@ -898,6 +908,8 @@ int CudaRasterizer::Rasterizer::evaluateSDF(
 		geomState.cov3D,
 		geomState.ray_planes,
 		geomState.normals,
+        geomState.lambda_sigma,
+        geomState.nv1_nv2,
 		geomState.rgb,
 		geomState.conic_opacity,
 		tile_grid,
@@ -1123,6 +1135,8 @@ int CudaRasterizer::Rasterizer::evaluateColor(
 		geomState.cov3D,
 		geomState.ray_planes,
 		geomState.normals,
+        geomState.lambda_sigma,
+        geomState.nv1_nv2,
 		geomState.rgb,
 		geomState.conic_opacity,
 		tile_grid,
@@ -1341,6 +1355,8 @@ int2 CudaRasterizer::Rasterizer::sampleDepth(
 		geomState.cov3D,
 		geomState.ray_planes,
 		geomState.normals,
+        geomState.lambda_sigma,
+        geomState.nv1_nv2,
 		geomState.rgb,
 		geomState.conic_opacity,
 		tile_grid,

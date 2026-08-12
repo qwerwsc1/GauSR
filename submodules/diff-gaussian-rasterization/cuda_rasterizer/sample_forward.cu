@@ -68,7 +68,7 @@ evaluateTransmittanceCUDA(
     float focal_x, float focal_y,
     const float2* __restrict__ points2D,
     const float* __restrict__ point_ts,
-    const float2* __restrict__ gaussians2D,
+    const float3* __restrict__ gaussians2D,
     const float4* __restrict__ conic_opacity,
     const float4* __restrict__ ray_planes,
     const float3* __restrict__ normals,
@@ -87,7 +87,7 @@ evaluateTransmittanceCUDA(
     const int rounds  = ((range.y - range.x + BLOCK_SIZE - 1) / BLOCK_SIZE);
 
     // Allocate storage for batches of collectively fetched data.
-    __shared__ float2 collected_xy[BLOCK_SIZE];
+    __shared__ float3 collected_xy[BLOCK_SIZE];
     __shared__ float4 collected_conic_opacity[BLOCK_SIZE];
     __shared__ float4 collected_ray_planes[BLOCK_SIZE];
 
@@ -132,7 +132,7 @@ evaluateTransmittanceCUDA(
 
         // Iterate over current batch
         for (int j = 0; !all_done && j < min(BLOCK_SIZE, toDo); j++) {
-            const float2 xy        = collected_xy[j];
+            const float3 xy        = collected_xy[j];
             const float4 con_o     = collected_conic_opacity[j];
             const float4 ray_plane = collected_ray_planes[j];
             for (int p = 0; p < point_num_round; p++) {
@@ -186,7 +186,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE)
         float focal_x, float focal_y,
         const float2* __restrict__ points2D,
         const float* __restrict__ point_ts,
-        const float2* __restrict__ gaussians2D,
+        const float3* __restrict__ gaussians2D,
         const float4* __restrict__ conic_opacity,
         const float4* __restrict__ ray_planes,
         const float3* __restrict__ normals,
@@ -204,7 +204,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE)
     const uint2 range = gaussian_ranges[tile_id];
     const int rounds  = ((range.y - range.x + BLOCK_SIZE - 1) / BLOCK_SIZE);
 
-    __shared__ float2 collected_xy[BLOCK_SIZE];
+    __shared__ float3 collected_xy[BLOCK_SIZE];
     __shared__ float4 collected_conic_opacity[BLOCK_SIZE];
     __shared__ float4 collected_ray_planes[BLOCK_SIZE];
 
@@ -252,8 +252,8 @@ __global__ void __launch_bounds__(BLOCK_SIZE)
         // Iterate over current batch
         for (int j = 0; !all_done && j < min(BLOCK_SIZE, toDo); j++) {
             contributor++;
-            const float2 xy        = collected_xy[j];
-            const float4 con_o     = collected_conic_opacity[j];
+            const float3 xy = collected_xy[j];
+            const float4 con_o = collected_conic_opacity[j];
             const float4 ray_plane = collected_ray_planes[j];
             for (int p = 0; p < point_num_round; p++) {
                 if (done[p])
@@ -366,7 +366,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE)
             // Iterate over current batch
             for (int j = 0; !all_done && j < min(BLOCK_SIZE, toDo); j++) {
                 contributor++;
-                const float2 xy        = collected_xy[j];
+                const float3 xy        = collected_xy[j];
                 const float4 con_o     = collected_conic_opacity[j];
                 const float4 ray_plane = collected_ray_planes[j];
                 for (int p = 0; p < point_num_round; p++) {
@@ -445,7 +445,7 @@ evaluateColorCUDA(
     float focal_x, float focal_y,
     const float2* __restrict__ points2D,
     const float* __restrict__ point_ts,
-    const float2* __restrict__ gaussians2D,
+    const float3* __restrict__ gaussians2D,
     const float4* __restrict__ conic_opacity,
     const float* __restrict__ colors,
     const float* bg_color,
@@ -464,7 +464,7 @@ evaluateColorCUDA(
     const int rounds  = ((range.y - range.x + BLOCK_SIZE - 1) / BLOCK_SIZE);
 
     // Allocate storage for batches of collectively fetched data.
-    __shared__ float2 collected_xy[BLOCK_SIZE];
+    __shared__ float3 collected_xy[BLOCK_SIZE];
     __shared__ float collected_color[BLOCK_SIZE * CHANNELS];
     __shared__ float4 collected_conic_opacity[BLOCK_SIZE];
 
@@ -512,7 +512,7 @@ evaluateColorCUDA(
 
         // Iterate over current batch
         for (int j = 0; !all_done && j < min(BLOCK_SIZE, toDo); j++) {
-            const float2 xy    = collected_xy[j];
+            const float3 xy    = collected_xy[j];
             const float4 con_o = collected_conic_opacity[j];
             for (int p = 0; p < point_num_round; p++) {
                 if (done[p])
@@ -559,7 +559,7 @@ __global__ void __launch_bounds__(BLOCK_X* BLOCK_Y)
         int W, int H,
         float focal_x, float focal_y,
         const float2* __restrict__ points2D,
-        const float2* __restrict__ gaussians2D,
+        const float3* __restrict__ gaussians2D,
         const float4* __restrict__ ray_planes,
         const float4* __restrict__ conic_opacity,
         uint32_t* __restrict__ n_contrib,
@@ -580,7 +580,7 @@ __global__ void __launch_bounds__(BLOCK_X* BLOCK_Y)
     const int p_rounds = ((p_range.y - p_range.x + BLOCK_SAMPLES_PRE_ROUND - 1) / BLOCK_SAMPLES_PRE_ROUND);
     int p_toDo = p_range.y - p_range.x;
 
-    __shared__ float2 collected_xy[BLOCK_SIZE];
+    __shared__ float3 collected_xy[BLOCK_SIZE];
     __shared__ float4 collected_conic_opacity[BLOCK_SIZE];
     __shared__ float3 collected_ray_planes[BLOCK_SIZE];
 
@@ -634,7 +634,7 @@ __global__ void __launch_bounds__(BLOCK_X* BLOCK_Y)
             for (int j = 0; !all_done && j < min(BLOCK_SIZE, toDo); j++) 
             {
                 contributor++;
-                float2 xy = collected_xy[j];
+                float3 xy = collected_xy[j];
                 float4 con_o = collected_conic_opacity[j];
                 float3 ray_plane = collected_ray_planes[j];
                 for (int p = 0; p < point_num_round; p++) 
@@ -732,7 +732,7 @@ void FORWARD::evaluateTransmittance(
     float focal_x, float focal_y,
     const float2* points2D,
     const float* point_depths,
-    const float2* gaussians2D,
+    const float3* gaussians2D,
     const float4* conic_opacity,
     const float4* ray_planes,
     const float3* normals,
@@ -771,7 +771,7 @@ void FORWARD::evaluateSDF(
     float focal_x, float focal_y,
     const float2* points2D,
     const float* point_ts,
-    const float2* gaussians2D,
+    const float3* gaussians2D,
     const float4* conic_opacity,
     const float4* ray_planes,
     const float3* normals,
@@ -813,7 +813,7 @@ void FORWARD::evaluateColor(
     float focal_x, float focal_y,
     const float2* points2D,
     const float* point_depths,
-    const float2* gaussians2D,
+    const float3* gaussians2D,
     const float4* conic_opacity,
     const float* colors,
     const float* bg_color,
@@ -850,7 +850,7 @@ void FORWARD::sampleDepth(
     int W, int H,
     float focal_x, float focal_y,
     const float2* points2D,
-    const float2* gaussians2D,
+    const float3* gaussians2D,
     const float4* ray_planes,
     const float4* conic_opacity,
     uint32_t* n_contrib,

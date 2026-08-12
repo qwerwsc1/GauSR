@@ -88,7 +88,7 @@ __global__ void __launch_bounds__(BLOCK_X* BLOCK_Y)
         int W, int H,
         float focal_x, float focal_y,
         const float2* __restrict__ points2D,
-        const float2* __restrict__ gaussians2D,
+        const float3* __restrict__ gaussians2D,
         const float4* __restrict__ ray_planes,
         const float4* __restrict__ conic_opacity,
         const uint32_t* __restrict__ n_contrib,
@@ -119,7 +119,7 @@ __global__ void __launch_bounds__(BLOCK_X* BLOCK_Y)
     const int rounds = ((range.y - range.x + BLOCK_SIZE - 1) / BLOCK_SIZE);
 
     __shared__ int collected_id[BLOCK_SIZE];
-    __shared__ float2 collected_xy[BLOCK_SIZE];
+    __shared__ float3 collected_xy[BLOCK_SIZE];
     __shared__ float4 collected_conic_opacity[BLOCK_SIZE];
     __shared__ float3 collected_ray_planes[BLOCK_SIZE];
     for (int p_round = 0; p_round < p_rounds; p_round++, p_toDo -= BLOCK_SAMPLES_PRE_ROUND) 
@@ -203,7 +203,7 @@ __global__ void __launch_bounds__(BLOCK_X* BLOCK_Y)
                 contributor--;
 
                 // Compute blending values, as before.
-                const float2 xy = collected_xy[j];
+                const float3 xy = collected_xy[j];
                 const float4 con_o = collected_conic_opacity[j];
                 float G[SAMPLES_PRE_ROUND];
                 bool valid[SAMPLES_PRE_ROUND] = {false}; // initialization for safety
@@ -337,7 +337,7 @@ void BACKWARD::sampleDepth(
     int W, int H,
     float focal_x, float focal_y,
     const float2* points2D,
-    const float2* gaussians2D,
+    const float3* gaussians2D,
     const float4* ray_planes,
     const float4* conic_opacity,
     const uint32_t* n_contrib,

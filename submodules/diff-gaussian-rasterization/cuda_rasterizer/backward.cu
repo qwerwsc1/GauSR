@@ -10,6 +10,7 @@
  */
 
 #include "backward.h"
+#include "vec_math.h"
 #include "auxiliary.h"
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
@@ -594,6 +595,38 @@ __device__ void computeCov3D(int idx, const glm::vec3 scale, float mod, const fl
 	dL_drots[idx] = glm::vec4(dL_dq.x, dL_dq.y, dL_dq.z, dL_dq.w);
 }
 
+__device__ float3 norm2d_grad(const float2 v) {
+	float norm2 = dot(v, v);
+	float norm = sqrtf(norm2);
+	float norm3 = norm * norm2;
+	norm3 = max(norm3, 1e-6f);  // NOTE: numerical statability
+	// float4 mat = {
+	// 	v.y * v.y / norm3, -v.x * v.y / norm3,
+	// 	-v.x * v.y / norm3, v.x * v.x / norm3
+	// }; // Compress as a vec3
+	float3 mat = {
+		v.y * v.y / norm3,
+		-v.x * v.y / norm3,
+		v.x * v.x / norm3
+	};
+	return mat;
+}
+
+__device__ float3 norm2d_grad(const float2 v, const float norm, const float norm2) {
+	float norm3 = norm * norm2;
+	norm3 = max(norm3, 1e-6f);
+	// float4 mat = {
+	// 	v.y * v.y / norm3, -v.x * v.y / norm3,
+	// 	-v.x * v.y / norm3, v.x * v.x / norm3
+	// };
+	float3 mat = {
+		v.y * v.y / norm3,
+		-v.x * v.y / norm3,
+		v.x * v.x / norm3
+	};
+	return mat;
+}
+
 // Backward pass of the preprocessing steps, except
 // for the covariance computation and inversion
 // (those are handled by a previous kernel call)
@@ -662,11 +695,13 @@ renderCUDA(
 	const uint32_t* __restrict__ point_list,
 	int W, int H,
 	const float* __restrict__ bg_color,
-	const float2* __restrict__ points_xy_image,
+	const float3* __restrict__ points_xy_image,
 	const float4* __restrict__ conic_opacity,
 	const float* __restrict__ colors,
 	const float4* __restrict__ ray_planes,		// from radegs
 	const float3* __restrict__ normals,			// from radegs
+	const float4* __restrict__ lambda_sigma,
+	const float4* __restrict__ nv1_nv2,
 	// const float* __restrict__ final_Ts,
 	const float* __restrict__ alphas,			// from radegs
 	const float* __restrict__ accum_depth,		// from radegs
@@ -708,11 +743,13 @@ renderCUDA(
 	int toDo = range.y - range.x;
 
 	__shared__ int collected_id[BLOCK_SIZE];
-	__shared__ float2 collected_xy[BLOCK_SIZE];
+	__shared__ float3 collected_xy[BLOCK_SIZE];
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
 	__shared__ float collected_colors[C * BLOCK_SIZE];
     [[maybe_unused]] __shared__ float4 collected_ray_planes[BLOCK_SIZE];
     [[maybe_unused]] __shared__ float3 collected_normals[BLOCK_SIZE];
+	__shared__ float4 collected_lambda_sigma[BLOCK_SIZE];
+	__shared__ float4 collected_nv1_nv2[BLOCK_SIZE];
 
 	// In the forward, we stored the final value for T, the
 	// product of all (1 - alpha) factors. 
@@ -793,6 +830,8 @@ renderCUDA(
 			collected_id[block.thread_rank()] = coll_id;
 			collected_xy[block.thread_rank()] = points_xy_image[coll_id];
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
+			collected_lambda_sigma[block.thread_rank()] = lambda_sigma[coll_id];
+			collected_nv1_nv2[block.thread_rank()] = nv1_nv2[coll_id];
 			for (int i = 0; i < C; i++)
 				collected_colors[i * BLOCK_SIZE + block.thread_rank()] = colors[coll_id * C + i];
 
@@ -815,15 +854,50 @@ renderCUDA(
 			// 	continue;
 
 			// Compute blending values, as before.
-			const float2 xy = collected_xy[j];
+			const float3 xy = collected_xy[j];
 			const float2 d = { xy.x - pixf.x, xy.y - pixf.y };
 			const float4 con_o = collected_conic_opacity[j];
-			const float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
+			// const float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
+			// const float G = exp(power);
 
-			const float G = exp(power);
+			// float det = (cov_o.x * cov_o.z - cov_o.y * cov_o.y);
+			// float mid = 0.5f * (cov_o.x + cov_o.z);
+			// Get the eigen values and vectors
+			const float root_sqrt = xy.z;
+            // const float lambda1 = mid + root_sqrt;
+			// const float lambda2 = mid - root_sqrt;
+			const float lambda1 = collected_lambda_sigma[j].x, lambda2 = collected_lambda_sigma[j].y;
+
+			// https://math.stackexchange.com/questions/395698/fast-way-to-calculate-eigen-of-2x2-matrix-using-a-formula
+			const float2 v1 = {con_o.y, lambda1 - con_o.x}; // equal to {lambda1 - con_o.z, con_o.y}
+			// NOTE: get the `norm2` for backward and decreate the `sqrtf` times
+			const float norm2_v1 = square_norm(v1);
+			const float norm_v1 = sqrtf(norm2_v1);
+			// const float2 nv1 = v1 / norm_v1;
+			const float2 v2 = {lambda2 - con_o.z, con_o.y}; // equal to {con_o.y, lambda2 - con_o.x}
+			const float norm2_v2 = square_norm(v2);
+			const float norm_v2 = sqrtf(norm2_v2);
+			// const float2 nv2 = v2 / norm_v2;
+			const float2 nv1 = {collected_nv1_nv2[j].x, collected_nv1_nv2[j].y}, nv2 = {collected_nv1_nv2[j].z, collected_nv1_nv2[j].w};
+
+			/* The same as forward */
+			// calculate the uv by projection
+			const float2 uv = {d.x * nv1.x + d.y * nv1.y, d.x * nv2.x + d.y * nv2.y};
+			const float sigma1 = collected_lambda_sigma[j].z, sigma2 = collected_lambda_sigma[j].w;
+			// const float sigma1 = sqrtf(lambda1), sigma2 = sqrtf(abs(lambda2));
+			const float denom_s1 = 1.0f / sigma1;
+			const float denom_s2 = 1.0f / sigma2;
+			const float U2 = (uv.x + 0.5f) * denom_s1, U1 = (uv.x - 0.5f) * denom_s1;
+			const float cdfU2 = approxCdf(U2), cdfU1 = approxCdf(U1);
+			const float intU = sigma1 * (cdfU2 - cdfU1);
+			const float V2 = (uv.y + 0.5f) * denom_s2, V1 = (uv.y - 0.5f) * denom_s2;
+			const float cdfV2 = approxCdf(V2), cdfV1 = approxCdf(V1);
+			const float intV = sigma2 * (cdfV2 - cdfV1);
+			const float G = M_2PIf * intU * intV;
+
 			const float alpha = 1.f - expf(-con_o.w * G); // min(0.99f, con_o.w * G);
 
-            bool valid = !(done || (contributor >= last_contributor) || (power > 0.0f) || (alpha < 1.0f / 255.0f));
+            bool valid = !(done || (contributor >= last_contributor) || (alpha < 1.0f / 255.0f));
             if (!warp.any(valid))
                 continue;
 
@@ -898,12 +972,77 @@ renderCUDA(
 				dL_dopa += -T_final / (1.f - alpha) * dL_dfinalT;
 
 				dL_dopa *= expf(-con_o.w * G);
+
+				// NOTE: please refer to the supplement for chain-rule details
+				/* Here is the backward of eigenvalue decomposition */
+				// const float2 dv1_dcovx = {0.0f, -1.0f}, dv1_dcovy = {1.0f, 0.0f}, dv1_dlamb1 = {0.0f, 1.0f};
+				// const float2 dv2_dcovy = {0.0f, 1.0f}, dv2_dcovz = {-1.0f, 0.0f}, dv2_dlamb2 = {1.0f, 0.0f};
+				const float3 dnv1_dv1 = norm2d_grad(v1, norm_v1, norm2_v1);
+				const float3 dnv2_dv2 = norm2d_grad(v2, norm_v2, norm2_v2);
+				// const float2 du_dnv1 = {d.x, d.y}, dv_dnv2 = {d.x, d.y};
+				// const float2 du_dv1 = {dnv1_dv1.x * d.x + dnv1_dv1.y * d.y, dnv1_dv1.y * d.x + dnv1_dv1.z * d.y};
+				// const float2 dv_dv2 = {dnv2_dv2.x * d.x + dnv2_dv2.y * d.y, dnv2_dv2.y * d.x + dnv2_dv2.z * d.y};
+				const float du_dcovx = -dnv1_dv1.y * d.x - dnv1_dv1.z * d.y; // equal to (du_dnv1 * dnv1_dv1 * dv1_dcovx)
+				const float du_dcovy =  dnv1_dv1.x * d.x + dnv1_dv1.y * d.y; // equal to (du_dnv1 * dnv1_dv1 * dv1_dcovy)
+				const float du_dlamb1 = dnv1_dv1.y * d.x + dnv1_dv1.z * d.y; // equal to (du_dnv1 * dnv1_dv1 * dv1_dlamb1)
+				const float dv_dcovz = -dnv2_dv2.x * d.x - dnv2_dv2.y * d.y; // equal to (dv_dnv2 * dnv2_dv2 * dv2_dcovz)
+				const float dv_dcovy =  dnv2_dv2.y * d.x + dnv2_dv2.z * d.y; // equal to (dv_dnv2 * dnv2_dv2 * dv2_dcovy)
+				const float dv_dlamb2 = dnv2_dv2.x * d.x + dnv2_dv2.y * d.y; // equal to (dv_dnv2 * dnv2_dv2 * dv2_dlamb2)
+
+				const float denom = root_sqrt == 0.0f ? 0.0f : 0.5f / root_sqrt; // NOTE: Handle corner cases
+				const float3 dlamb1_dcov = {
+					0.5f + 0.5f * (con_o.x - con_o.z) * denom,
+					2.0f * con_o.y * denom,
+					0.5f + 0.5f * (con_o.z - con_o.x) * denom
+				};
+				float3 dlamb2_dcov = {
+					0.5f - 0.5f * (con_o.x - con_o.z) * denom,
+					-2.0f * con_o.y * denom,
+					0.5f - 0.5f * (con_o.z - con_o.x) * denom
+				};
+
+
 				// Helpful reusable temporary variables
 				const float dL_dG = con_o.w * dL_dopa;
-				const float gdx = G * d.x;
-				const float gdy = G * d.y;
-				const float dG_ddelx = -gdx * con_o.x - gdy * con_o.y;
-				const float dG_ddely = -gdy * con_o.z - gdx * con_o.y;
+				// const float gdx = G * d.x;
+				// const float gdy = G * d.y;
+				// const float dG_ddelx = -gdx * con_o.x - gdy * con_o.y;
+				// const float dG_ddely = -gdy * con_o.z - gdx * con_o.y;
+
+				// // Update gradients w.r.t. 2D mean position of the Gaussian
+				// float dL_ddelx = dL_dG * dG_ddelx;
+				// float dL_ddely = dL_dG * dG_ddely;
+
+				// Gradient of integral approximation
+				const float dcdfU2_dU2 = (1.6f + 0.21f * U2 * U2) * cdfU2 * (1.0f - cdfU2);
+				const float dcdfU1_dU1 = (1.6f + 0.21f * U1 * U1) * cdfU1 * (1.0f - cdfU1);
+				const float dcdfV2_dV2 = (1.6f + 0.21f * V2 * V2) * cdfV2 * (1.0f - cdfV2);
+				const float dcdfV1_dV1 = (1.6f + 0.21f * V1 * V1) * cdfV1 * (1.0f - cdfV1);
+				const float dU2_dsigma1 = -U2 * denom_s1, dU1_dsigma1 = -U1 * denom_s1;
+				const float dV2_dsigma2 = -V2 * denom_s2, dV1_dsigma2 = -V1 * denom_s2;
+
+				const float dG_dintU = M_2PIf * intV;
+				const float dG_dintV = M_2PIf * intU;
+
+				// const float dU2_du = denom_s1, dU1_du = denom_s1;
+				// const float dV2_dv = denom_s2, dV1_dv = denom_s2;
+				// const float dG_du = dG_dintU * sigma1 * (dcdfU2_dU2 * dU2_du - dcdfU1_dU1 * dU1_du);
+				// const float dG_dv = dG_dintV * sigma2 * (dcdfV2_dV2 * dV2_dv - dcdfV1_dV1 * dV1_dv);
+				const float dG_du = dG_dintU * sigma1 * (dcdfU2_dU2 * denom_s1 - dcdfU1_dU1 * denom_s1);
+				const float dG_dv = dG_dintV * sigma2 * (dcdfV2_dV2 * denom_s2 - dcdfV1_dV1 * denom_s2);
+				const float dG_ddelx = nv1.x * dG_du + nv2.x * dG_dv;
+				const float dG_ddely = nv1.y * dG_du + nv2.y * dG_dv;
+
+				const float dintU_dsigma1 = (cdfU2 - cdfU1) + sigma1 * (dcdfU2_dU2 * dU2_dsigma1 - dcdfU1_dU1 * dU1_dsigma1);
+				const float dintV_dsigma2 = (cdfV2 - cdfV1) + sigma2 * (dcdfV2_dV2 * dV2_dsigma2 - dcdfV1_dV1 * dV1_dsigma2);
+				const float dG_dsigma1 = dG_dintU * dintU_dsigma1;
+				const float dG_dsigma2 = dG_dintV * dintV_dsigma2;
+
+				float dsigma1_dlamb1 = 0.5f * denom_s1;
+				float dsigma2_dlamb2 = 0.5f * denom_s2;
+				if (lambda2 < 0) dsigma2_dlamb2 = -dsigma2_dlamb2;
+				float dG_dlamb1 = dG_dsigma1 * dsigma1_dlamb1;
+				float dG_dlamb2 = dG_dsigma2 * dsigma2_dlamb2;
 
 				// Update gradients w.r.t. 2D mean position of the Gaussian
 				float dL_ddelx = dL_dG * dG_ddelx;
@@ -919,9 +1058,22 @@ renderCUDA(
 				dL_dmean2D_local.y = dL_ddely * ddely_dy;
 				dL_dmean2D_local.z = fabsf(dL_dmean2D_local.x) + fabsf(dL_dmean2D_local.y);
 
-				dL_dconic2D_local.x = -0.5f * gdx * d.x * dL_dG;
-				dL_dconic2D_local.y = -0.5f * gdx * d.y * dL_dG;
-				dL_dconic2D_local.z = -0.5f * gdy * d.y * dL_dG;
+				// dL_dconic2D_local.x = -0.5f * gdx * d.x * dL_dG;
+				// dL_dconic2D_local.y = -0.5f * gdx * d.y * dL_dG;
+				// dL_dconic2D_local.z = -0.5f * gdy * d.y * dL_dG;
+				// dL_dconic2D_local.w = G * dL_dopa;
+				dL_dconic2D_local.x = dL_dG * (
+					dG_dlamb1 * dlamb1_dcov.x + dG_dlamb2 * dlamb2_dcov.x +
+					dG_du * (du_dcovx + du_dlamb1 * dlamb1_dcov.x) + dG_dv * (dv_dlamb2 * dlamb2_dcov.x)
+				);
+				dL_dconic2D_local.y = dL_dG * (
+					dG_dlamb1 * dlamb1_dcov.y + dG_dlamb2 * dlamb2_dcov.y +
+					dG_du * (du_dcovy + du_dlamb1 * dlamb1_dcov.y) + dG_dv * (dv_dcovy + dv_dlamb2 * dlamb2_dcov.y)
+				);
+				dL_dconic2D_local.z = dL_dG * (
+					dG_dlamb1 * dlamb1_dcov.z + dG_dlamb2 * dlamb2_dcov.z +
+					dG_du * (du_dlamb1 * dlamb1_dcov.z) + dG_dv * (dv_dcovz + dv_dlamb2 * dlamb2_dcov.z)
+				);
 				dL_dconic2D_local.w = G * dL_dopa;
 			}
 
@@ -1051,11 +1203,13 @@ void BACKWARD::render(
 	const uint32_t* point_list,
 	int W, int H,
 	const float* bg_color,
-	const float2* means2D,
+	const float3* means2D,
 	const float4* conic_opacity,
 	const float* colors,
 	const float4* ray_planes,
     const float3* normals,
+	const float4* lambda_sigma,
+	const float4* nv1_nv2,
     const float* alphas,
     const float* accum_depth,
     const float* normal_length,
@@ -1088,6 +1242,8 @@ void BACKWARD::render(
 			colors,
 			ray_planes, 
 			normals, 
+			lambda_sigma,
+			nv1_nv2,
 			alphas, 
 			accum_depth, 
 			normal_length,
@@ -1119,6 +1275,8 @@ void BACKWARD::render(
 			colors,
 			ray_planes, 
 			normals, 
+			lambda_sigma,
+			nv1_nv2,
 			alphas, 
 			accum_depth, 
 			normal_length,

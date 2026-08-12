@@ -32,10 +32,12 @@ namespace CudaRasterizer
 		float* depths;
 		float4* ray_planes;
     	float3* normals;
+		float4* lambda_sigma;
+		float4* nv1_nv2;
 		char* scanning_space;
 		bool* clamped;
 		int* internal_radii;
-		float2* means2D;
+		float3* means2D;
 		float* cov3D;
 		float4* conic_opacity;
 		float* rgb;

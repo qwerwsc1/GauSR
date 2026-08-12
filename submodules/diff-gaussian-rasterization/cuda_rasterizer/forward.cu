@@ -10,6 +10,7 @@
  */
 
 #include "forward.h"
+#include "vec_math.h"
 #include "auxiliary.h"
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
@@ -251,11 +252,13 @@ __global__ void preprocessCUDA(
 	const float focal_x, float focal_y,
 	const float kernel_size,
 	int* radii,
-	float2* points_xy_image,
+	float3* points_xy_image,
 	float* depths,
 	float* cov3Ds,
 	float4* ray_planes,	// from radegs
     float3* normals,	// from radegs
+	float4* lambda_sigma,
+	float4* nv1_nv2,
 	float* rgb,
 	float4* conic_opacity,
 	const dim3 grid,
@@ -315,12 +318,24 @@ __global__ void preprocessCUDA(
 	float mid = 0.5f * (cov.x + cov.z);
 	float lambda1 = mid + sqrt(max(0.1f, mid * mid - det));
 	float lambda2 = mid - sqrt(max(0.1f, mid * mid - det));
+	const float root_sqrt = sqrtf(max(0.0f, mid * mid - det));
+	// from Analytic-Splatting
+	float lambda_1 = mid + root_sqrt;
+	float lambda_2 = mid - root_sqrt;
 	float my_radius = ceil(3.f * sqrt(max(lambda1, lambda2)));
-	float2 point_image = { ndc2Pix(p_proj.x, W), ndc2Pix(p_proj.y, H) };
+	float3 point_image = { ndc2Pix(p_proj.x, W), ndc2Pix(p_proj.y, H), root_sqrt};	// gaussian center in pixel coordinates
 	uint2 rect_min, rect_max;
 	getRect(point_image, my_radius, rect_min, rect_max, grid);
 	if ((rect_max.x - rect_min.x) * (rect_max.y - rect_min.y) == 0)
 		return;
+
+
+	// https://math.stackexchange.com/questions/395698/fast-way-to-calculate-eigen-of-2x2-matrix-using-a-formula
+	float2 v1 = {cov.y, lambda_1 - cov.x};
+	v1 = normalize(v1);
+	float2 v2 = {lambda_2 - cov.z, cov.y};
+	v2 = normalize(v2);
+	const float sigma1 = sqrtf(lambda_1), sigma2 = sqrtf(abs(lambda_2));
 
 	// If colors have been precomputed, use them, otherwise convert
 	// spherical harmonics coefficients to RGB color.
@@ -339,6 +354,8 @@ __global__ void preprocessCUDA(
 	// Inverse 2D covariance and opacity neatly pack into one float4
 	conic_opacity[idx] = { conic.x, conic.y, conic.z, opacities[idx] * ceof };
 	tiles_touched[idx] = (rect_max.y - rect_min.y) * (rect_max.x - rect_min.x);
+	lambda_sigma[idx] = {lambda_1, lambda_2, sigma1, sigma2};
+	nv1_nv2[idx] = {v1.x, v1.y, v2.x, v2.y};
 }
 
 // Main rasterization method. Collaboratively works on one tile per
@@ -350,11 +367,13 @@ renderCUDA(
 	const uint2* __restrict__ ranges,
 	const uint32_t* __restrict__ point_list,
 	int W, int H,
-	const float2* __restrict__ points_xy_image,
+	const float3* __restrict__ points_xy_image,
 	const float* __restrict__ features,
 	const float4* __restrict__ conic_opacity,
 	const float4* __restrict__ ray_planes,
 	const float3* __restrict__ normals,
+	const float4* __restrict__ lambda_sigma,
+	const float4* __restrict__ nv1_nv2,
 	const float focal_x,
 	const float focal_y,
 	// float* __restrict__ final_T,
@@ -391,11 +410,14 @@ renderCUDA(
 
 	// Allocate storage for batches of collectively fetched data.
 	// __shared__ int collected_id[BLOCK_SIZE];
-	__shared__ float2 collected_xy[BLOCK_SIZE];
+	__shared__ float3 collected_xy[BLOCK_SIZE];
 	__shared__ float collected_feature[BLOCK_SIZE * CHANNELS];
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
 	[[maybe_unused]] __shared__ float4 collected_ray_planes[BLOCK_SIZE];
     [[maybe_unused]] __shared__ float3 collected_normals[BLOCK_SIZE];
+	__shared__ float4 collected_lambda_sigma[BLOCK_SIZE];
+	__shared__ float4 collected_nv1_nv2[BLOCK_SIZE];
+
 
 	// Initialize helper variables
 	float T = 1.0f;
@@ -424,6 +446,8 @@ renderCUDA(
 			int coll_id = point_list[range.x + progress];
 			collected_xy[block.thread_rank()] = points_xy_image[coll_id];
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
+			collected_lambda_sigma[block.thread_rank()] = lambda_sigma[coll_id];
+			collected_nv1_nv2[block.thread_rank()] = nv1_nv2[coll_id];
 			for (int ch = 0; ch < CHANNELS; ch++)
                 collected_feature[ch * BLOCK_SIZE + block.thread_rank()] = features[coll_id * CHANNELS + ch];
 			if constexpr (GEOMETRY) {
@@ -441,19 +465,33 @@ renderCUDA(
 
 			// Resample using conic matrix (cf. "Surface 
 			// Splatting" by Zwicker et al., 2001)
-			float2 xy = collected_xy[j];
+			float3 xy = collected_xy[j];
 			float2 d = { xy.x - pixf.x, xy.y - pixf.y };
 			float4 con_o = collected_conic_opacity[j];
-			float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
-			if (power > 0.0f)
-				continue;
+			// float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
+			// if (power > 0.0f)
+			// 	continue;
+
+			float2 v1 = {collected_nv1_nv2[j].x, collected_nv1_nv2[j].y}, v2 = {collected_nv1_nv2[j].z, collected_nv1_nv2[j].w};
+			// // calculate the uv by projection
+			float2 uv = {d.x * v1.x + d.y * v1.y, d.x * v2.x + d.y * v2.y};
+			float sigma1 = collected_lambda_sigma[j].z, sigma2 = collected_lambda_sigma[j].w;
+
+			// Equal to exp(power)
+			// const float sigma1 = sqrtf(lambda1), sigma2 = sqrtf(abs(lambda2));
+			const float U2 = (uv.x + 0.5f) / sigma1, U1 = (uv.x - 0.5f) / sigma1;
+			const float cdfU2 = approxCdf(U2), cdfU1 = approxCdf(U1);
+			const float intU = sigma1 * (cdfU2 - cdfU1);
+			const float V2 = (uv.y + 0.5f) / sigma2, V1 = (uv.y - 0.5f) / sigma2;
+			const float cdfV2 = approxCdf(V2), cdfV1 = approxCdf(V1);
+			const float intV = sigma2 * (cdfV2 - cdfV1);
+			const float integral = M_2PIf * intU * intV;
 
 			// Eq. (2) from 3D Gaussian splatting paper.
 			// Obtain alpha by multiplying with Gaussian opacity
 			// and its exponential falloff from mean.
 			// Avoid numerical instabilities (see paper appendix). 
-			
-			float alpha = 1.f - expf(-con_o.w * exp(power)); // min(0.99f, con_o.w * exp(power));
+			float alpha = 1.f - expf(-con_o.w * exp(integral)); // min(0.99f, con_o.w * exp(power));
 			if (alpha < 1.0f / 255.0f)
 				continue;
 
@@ -524,11 +562,13 @@ void FORWARD::render(
 	const uint2* ranges,
 	const uint32_t* point_list,
 	int W, int H,
-	const float2* means2D,
+	const float3* means2D,
 	const float* colors,
 	const float4* conic_opacity,
 	const float4* ray_planes,
     const float3* normals,
+	const float4* lambda_sigma,
+	const float4* nv1_nv2,
     const float focal_x,
     const float focal_y,
 	// float* final_T,
@@ -553,6 +593,8 @@ void FORWARD::render(
 			conic_opacity,
 			ray_planes,
 			normals,
+			lambda_sigma,
+			nv1_nv2,
 			focal_x,
 			focal_y,
 			n_contrib,
@@ -574,6 +616,8 @@ void FORWARD::render(
 			conic_opacity,
 			ray_planes,
 			normals,
+			lambda_sigma,
+			nv1_nv2,
 			focal_x,
 			focal_y,
 			n_contrib,
@@ -606,11 +650,13 @@ void FORWARD::preprocess(
 	const float tan_fovx, float tan_fovy,
 	const float kernel_size,
 	int* radii,
-	float2* means2D,
+	float3* means2D,
 	float* depths,
 	float* cov3Ds,
 	float4* ray_planes,
 	float3* normals,
+	float4* lambda_sigma,
+	float4* nv1_nv2,
 	float* rgb,
 	float4* conic_opacity,
 	const dim3 grid,
@@ -643,6 +689,8 @@ void FORWARD::preprocess(
 			cov3Ds,
 			ray_planes,
 			normals,
+			lambda_sigma,
+			nv1_nv2,
 			rgb,
 			conic_opacity,
 			grid,
@@ -673,6 +721,8 @@ void FORWARD::preprocess(
 			cov3Ds,
 			ray_planes,
 			normals,
+			lambda_sigma,
+			nv1_nv2,
 			rgb,
 			conic_opacity,
 			grid,
