@@ -1,0 +1,4 @@
+# ninja log v5
+0	2885	1784601241751972090	/home/wangsc/Documents/gausr/codes/GauSR/submodules/warp-patch-ncc/build/temp.linux-x86_64-cpython-38/cuda_warp_patch_ncc/warp_patch_ncc_impl.o	f0953a59d90196d6
+1	29317	1784601268151794272	/home/wangsc/Documents/gausr/codes/GauSR/submodules/warp-patch-ncc/build/temp.linux-x86_64-cpython-38/ext.o	e4a8e3d76286ff60
+1	55946	1784601294807616249	/home/wangsc/Documents/gausr/codes/GauSR/submodules/warp-patch-ncc/build/temp.linux-x86_64-cpython-38/warp_patch_ncc.o	dd514aff76e4f1b1

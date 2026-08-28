@@ -38,6 +38,7 @@ namespace CudaRasterizer
 			const float* means3D,
 			const float* shs,
 			const float* colors_precomp,
+			const float* normals_precomp,
 			const float* opacities,
 			const float* scales,
 			const float scale_modifier,
@@ -59,6 +60,7 @@ namespace CudaRasterizer
 			const float* means3D,
 			const float* shs,
 			const float* colors_precomp,
+			const float* normals_precomp,
 			const float* scales,
 			const float scale_modifier,
 			const float* rotations,
@@ -72,6 +74,8 @@ namespace CudaRasterizer
 			char* binning_buffer,
 			char* image_buffer,
 			const float* dL_dpix,
+			const float* dL_dpix_normal,
+			const float* dL_dpix_depth,
 			float* dL_dmean2D,
 			float* dL_dconic,
 			float* dL_dopacity,
@@ -81,6 +85,7 @@ namespace CudaRasterizer
 			float* dL_dsh,
 			float* dL_dscale,
 			float* dL_drot,
+			bool require_geo,
 			bool debug);
 	};
 };

@@ -247,7 +247,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	}
 
 	// Store some useful helper data for the next steps.
-	depths[idx] = p_view.z;
+	depths[idx] = p_view.z;	// norm3df(p_view.x, p_view.y, p_view.z);
 	radii[idx] = my_radius;
 	points_xy_image[idx] = point_image;
 	// Inverse 2D covariance and opacity neatly pack into one float4
@@ -258,19 +258,23 @@ __global__ void preprocessCUDA(int P, int D, int M,
 // Main rasterization method. Collaboratively works on one tile per
 // block, each thread treats one pixel. Alternates between fetching 
 // and rasterizing data.
-template <uint32_t CHANNELS>
+template <uint32_t CHANNELS, bool GEOMETRY>
 __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 renderCUDA(
 	const uint2* __restrict__ ranges,
 	const uint32_t* __restrict__ point_list,
 	int W, int H,
 	const float2* __restrict__ points_xy_image,
-	const float* __restrict__ features,
+	const float* __restrict__ features,		// RGB colors of each Gaussian
+	const float* __restrict__ normals,		// Normals of each Gaussian
+	const float* __restrict__ depths,			// Depths of each Gaussian
 	const float4* __restrict__ conic_opacity,
 	float* __restrict__ final_T,
 	uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ bg_color,
-	float* __restrict__ out_color)
+	float* __restrict__ out_color,
+	float* __restrict__ out_normal,
+	float* __restrict__ out_depth)
 {
 	// Identify current tile and associated min/max pixel range.
 	auto block = cg::this_thread_block();
@@ -280,7 +284,6 @@ renderCUDA(
 	uint2 pix = { pix_min.x + block.thread_index().x, pix_min.y + block.thread_index().y };
 	uint32_t pix_id = W * pix.y + pix.x;
 	float2 pixf = { (float)pix.x, (float)pix.y };
-
 	// Check if this thread is associated with a valid pixel or outside.
 	bool inside = pix.x < W&& pix.y < H;
 	// Done threads can help with fetching, but don't rasterize
@@ -294,13 +297,20 @@ renderCUDA(
 	// Allocate storage for batches of collectively fetched data.
 	__shared__ int collected_id[BLOCK_SIZE];
 	__shared__ float2 collected_xy[BLOCK_SIZE];
+	// __shared__ float collected_feature[BLOCK_SIZE * CHANNELS];
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
+	[[maybe_unused]] __shared__ float3 collected_normals[BLOCK_SIZE];
+	[[maybe_unused]] __shared__ float3 collected_depths[2 * BLOCK_SIZE];
 
 	// Initialize helper variables
 	float T = 1.0f;
 	uint32_t contributor = 0;
 	uint32_t last_contributor = 0;
+	uint32_t max_contributors = -1;
 	float C[CHANNELS] = { 0 };
+	[[maybe_unused]] float Depth = 0;
+	[[maybe_unused]] float mDepth = 0;
+	[[maybe_unused]] float3 Normal[3] = { 0 };
 
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
@@ -318,6 +328,11 @@ renderCUDA(
 			collected_id[block.thread_rank()] = coll_id;
 			collected_xy[block.thread_rank()] = points_xy_image[coll_id];
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
+			if constexpr (GEOMETRY) {
+				collected_normals[block.thread_rank()] = normals[coll_id];
+				collected_depths[block.thread_rank()] = depths[coll_id];
+			}
+
 		}
 		block.sync();
 
@@ -340,9 +355,10 @@ renderCUDA(
 			// Obtain alpha by multiplying with Gaussian opacity
 			// and its exponential falloff from mean.
 			// Avoid numerical instabilities (see paper appendix). 
-			float alpha = min(0.99f, con_o.w * exp(power));
+			float alpha = min(0.99f, con_o.w * exp(power));	// 1.f - expf(-con_o.w * exp(power));
 			if (alpha < 1.0f / 255.0f)
 				continue;
+
 			float test_T = T * (1 - alpha);
 			if (test_T < 0.0001f)
 			{
@@ -353,6 +369,21 @@ renderCUDA(
 			// Eq. (3) from 3D Gaussian splatting paper.
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
+
+			if constexpr (GEOMETRY) 
+			{
+				float t = collected_depths[j];
+				Depth += t * alpha * T;
+				if (T > 0.5) {
+					mDepth = t;
+					max_contributors = contributor;
+				}
+
+				float3 normal = collected_normals[j];
+				Normal[0] += normal.x * alpha * T;
+				Normal[1] += normal.y * alpha * T;
+				Normal[2] += normal.z * alpha * T;
+			}
 
 			T = test_T;
 
@@ -368,8 +399,20 @@ renderCUDA(
 	{
 		final_T[pix_id] = T;
 		n_contrib[pix_id] = last_contributor;
+		n_contrib[pix_id + H * W] = max_contributor;
 		for (int ch = 0; ch < CHANNELS; ch++)
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
+
+		if constexpr (GEOMETRY) {
+			out_depth[pix_id] = Depth / (1.0f - T);
+			out_depth[H * W + pix_id] = mDepth;
+
+			float len_normal = norm3df(Normal[0], Normal[1], Normal[2]);
+            normal_length[pix_id] = len_normal;
+            len_normal = fmaxf(len_normal, 1.0E-12F);
+            for (int ch = 0; ch < 3; ch++)
+                out_normal[ch * H * W + pix_id] = Normal[ch] / len_normal;
+		}
 	}
 }
 
@@ -380,26 +423,53 @@ void FORWARD::render(
 	int W, int H,
 	const float2* means2D,
 	const float* colors,
+	const float* normals,
+	const float* depths,
 	const float4* conic_opacity,
 	float* final_T,
 	uint32_t* n_contrib,
 	const float* bg_color,
-	float* out_color)
+	float* out_color,
+	float* out_normal,
+	float* out_depth,
+	bool require_geo)
 {
-	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
-		ranges,
-		point_list,
-		W, H,
-		means2D,
-		colors,
-		conic_opacity,
-		final_T,
-		n_contrib,
-		bg_color,
-		out_color);
+	if (require_geo)
+		renderCUDA<NUM_CHANNELS, true><<<grid, block>>> (
+			ranges,
+			point_list,
+			W, H,
+			means2D,
+			colors,
+			normals,
+			depths,
+			conic_opacity,
+			final_T,
+			n_contrib,
+			bg_color,
+			out_color,
+			out_normal,
+			out_depth);
+	else
+		renderCUDA<NUM_CHANNELS, false><<<grid, block>>> (
+			ranges,
+			point_list,
+			W, H,
+			means2D,
+			colors,
+			normals,
+			depths,
+			conic_opacity,
+			final_T,
+			n_contrib,
+			bg_color,
+			out_color,
+			out_normal,
+			out_depth);
 }
 
-void FORWARD::preprocess(int P, int D, int M,
+void FORWARD::preprocess(
+	int P, int D, int M,
 	const float* means3D,
 	const glm::vec3* scales,
 	const float scale_modifier,
@@ -425,7 +495,7 @@ void FORWARD::preprocess(int P, int D, int M,
 	uint32_t* tiles_touched,
 	bool prefiltered)
 {
-	preprocessCUDA<NUM_CHANNELS> << <(P + 255) / 256, 256 >> > (
+	preprocessCUDA<NUM_CHANNELS><<<(P + 255) / 256, 256>>> (
 		P, D, M,
 		means3D,
 		scales,
@@ -450,6 +520,5 @@ void FORWARD::preprocess(int P, int D, int M,
 		conic_opacity,
 		grid,
 		tiles_touched,
-		prefiltered
-		);
+		prefiltered);
 }

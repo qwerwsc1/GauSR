@@ -396,7 +396,7 @@ __global__ void preprocessCUDA(
 }
 
 // Backward version of the rendering procedure.
-template <uint32_t C>
+template <uint32_t C, bool GEOMETRY>
 __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 renderCUDA(
 	const uint2* __restrict__ ranges,
@@ -406,9 +406,13 @@ renderCUDA(
 	const float2* __restrict__ points_xy_image,
 	const float4* __restrict__ conic_opacity,
 	const float* __restrict__ colors,
+	const float* __restrict__ normals,
+	const float* __restrict__ depths,
 	const float* __restrict__ final_Ts,
 	const uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ dL_dpixels,
+	const float* __restrict__ dL_dpixels_normals,
+	const float* __restrict__ dL_dpixels_depths,
 	float3* __restrict__ dL_dmean2D,
 	float4* __restrict__ dL_dconic2D,
 	float* __restrict__ dL_dopacity,
@@ -435,22 +439,36 @@ renderCUDA(
 	__shared__ float2 collected_xy[BLOCK_SIZE];
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
 	__shared__ float collected_colors[C * BLOCK_SIZE];
+	__shared__ float collected_normals[C * BLOCK_SIZE];
+	__shared__ float collected_depths[2 * BLOCK_SIZE];
 
 	// In the forward, we stored the final value for T, the
 	// product of all (1 - alpha) factors. 
 	const float T_final = inside ? final_Ts[pix_id] : 0;
+	const float w_final = 1.f - T_final;
+
 	float T = T_final;
 
 	// We start from the back. The ID of the last contributing
 	// Gaussian is known from each pixel from the forward.
 	uint32_t contributor = toDo;
 	const int last_contributor = inside ? n_contrib[pix_id] : 0;
+	const int max_contributors = inside ? n_contrib[pix_id + H * W] : 0;
 
 	float accum_rec[C] = { 0 };
 	float dL_dpixel[C];
+	float dL_dfinalT;
 	if (inside)
 		for (int i = 0; i < C; i++)
 			dL_dpixel[i] = dL_dpixels[i * H * W + pix_id];
+
+		if (GEOMETRY) {
+			// normals 
+			glm::vec3 dL_dnormal_out = glm::vec3(dL_dpixels_normals[pix_id], dL_dpixels_normals[pix_id + 1], dL_dpixels_normals[pix_id + 2]);
+
+			// depths
+			glm::vec3 dL_ddepth_out = glm::vec3(dL_dpixels_depths[pix_id], dL_dpixels_depths[pix_id + 1], dL_dpixels_depths[pix_id + 2]);
+		}
 
 	float last_alpha = 0;
 	float last_color[C] = { 0 };
@@ -630,28 +648,57 @@ void BACKWARD::render(
 	const float2* means2D,
 	const float4* conic_opacity,
 	const float* colors,
+	const float* normals,
+	const float* depths,
 	const float* final_Ts,
 	const uint32_t* n_contrib,
 	const float* dL_dpixels,
+	const float* dL_dpixels_normal,
+	const float* dL_dpixels_depth,
 	float3* dL_dmean2D,
 	float4* dL_dconic2D,
 	float* dL_dopacity,
-	float* dL_dcolors)
+	float* dL_dcolors,
+    bool require_geo)
 {
-	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
-		ranges,
-		point_list,
-		W, H,
-		bg_color,
-		means2D,
-		conic_opacity,
-		colors,
-		final_Ts,
-		n_contrib,
-		dL_dpixels,
-		dL_dmean2D,
-		dL_dconic2D,
-		dL_dopacity,
-		dL_dcolors
-		);
-}
+	if (require_geo)
+		renderCUDA<NUM_CHANNELS, true><<<grid, block>>>(
+			ranges,
+			point_list,
+			W, H,
+			bg_color,
+			means2D,
+			conic_opacity,
+			colors,
+			normals,
+			depths,
+			final_Ts,
+			n_contrib,
+			dL_dpixels,
+			dL_dpixels_normal,
+			dL_dpixels_depth,
+			dL_dmean2D,
+			dL_dconic2D,
+			dL_dopacity,
+			dL_dcolors);
+	else
+		renderCUDA<NUM_CHANNELS, false><<<grid, block>>>(
+			ranges,
+			point_list,
+			W, H,
+			bg_color,
+			means2D,
+			conic_opacity,
+			colors,
+			normals,
+			depths,
+			final_Ts,
+			n_contrib,
+			dL_dpixels,
+			dL_dpixels_normal,
+			dL_dpixels_depth,
+			dL_dmean2D,
+			dL_dconic2D,
+			dL_dopacity,
+			dL_dcolors);
+	}
