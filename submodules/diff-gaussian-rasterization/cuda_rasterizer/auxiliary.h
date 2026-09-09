@@ -136,7 +136,8 @@ __forceinline__ __device__ float sigmoid(float x)
 	return 1.0f / (1.0f + expf(-x));
 }
 
-__forceinline__ __device__ bool in_frustum(int idx,
+__forceinline__ __device__ bool in_frustum(
+	int idx,
 	const float* orig_points,
 	const float* viewmatrix,
 	const float* projmatrix,

@@ -75,3 +75,23 @@ def fov2focal(fov, pixels):
 
 def focal2fov(focal, pixels):
     return 2*math.atan(pixels/(2*focal))
+
+def depth_to_normal(view, depth):
+    W, H = view.image_width, view.image_height
+    grid_x, grid_y = torch.meshgrid(
+        (torch.arange(W, device="cuda", dtype=torch.float32) - view.Cx) / view.Fx,
+        (torch.arange(H, device="cuda", dtype=torch.float32) - view.Cy) / view.Fy,
+        indexing="xy",
+    )
+    rays_d = torch.stack(
+        [grid_x, grid_y, torch.ones_like(grid_x)],
+        dim=0,
+    )
+    rays_d.requires_grad_(False)
+    points = depth * rays_d
+    dy = points[:, 2:, 1:-1] - points[:, :-2, 1:-1]
+    dx = points[:, 1:-1, 2:] - points[:, 1:-1, :-2]
+    normal_map = torch.nn.functional.normalize(torch.cross(dy, dx, dim=0), dim=0)
+    output = torch.zeros_like(points)
+    output[:, 1:-1, 1:-1] = normal_map
+    return output

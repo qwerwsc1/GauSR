@@ -22,6 +22,7 @@ from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+from utils.graphics_utils import depth_to_normal
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -83,15 +84,28 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
-        render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
+        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, return_plane=iteration>opt.single_view_weight_from_iter, return_depth_normal=iteration>opt.single_view_weight_from_iter)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        ## scale loss
+        if visibility_filter.sum() > 0:
+            scale = gaussians.get_scaling[visibility_filter]
+            sorted_scale, _ = torch.sort(scale, dim=-1)
+            min_scale_loss = sorted_scale[...,0]
+            loss += opt.scale_loss_weight * min_scale_loss.mean()
+        ## depth-normal loss
+        if iteration>opt.single_view_weight_from_iter:
+            rendered_depth: torch.Tensor = render_pkg["plane_depth"]
+            rendered_normal: torch.Tensor = render_pkg["rendered_normal"]
+            depth_normal = depth_to_normal(viewpoint_cam, rendered_depth)
+            normal_error_map = 1 - torch.linalg.vecdot(rendered_normal, depth_normal, dim=0)
+            loss += normal_error_map.mean()
+            
         loss.backward()
-
         iter_end.record()
 
         with torch.no_grad():

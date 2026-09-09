@@ -153,7 +153,8 @@ __device__ void computeCov3D(const glm::vec3 scale, float mod, const glm::vec4 r
 
 // Perform initial steps for each Gaussian prior to rasterization.
 template<int C>
-__global__ void preprocessCUDA(int P, int D, int M,
+__global__ void preprocessCUDA(
+	int P, int D, int M,
 	const float* orig_points,
 	const glm::vec3* scales,
 	const float scale_modifier,
@@ -258,19 +259,24 @@ __global__ void preprocessCUDA(int P, int D, int M,
 // Main rasterization method. Collaboratively works on one tile per
 // block, each thread treats one pixel. Alternates between fetching 
 // and rasterizing data.
-template <uint32_t CHANNELS>
+template <uint32_t CHANNELS, uint32_t ALL_MAP, bool RENDER_GEO>
 __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 renderCUDA(
 	const uint2* __restrict__ ranges,
 	const uint32_t* __restrict__ point_list,
 	int W, int H,
+	const float focal_x, const float focal_y,
+	const float cx, const float cy,
 	const float2* __restrict__ points_xy_image,
 	const float* __restrict__ features,
+	const float* __restrict__ all_map,
 	const float4* __restrict__ conic_opacity,
 	float* __restrict__ final_T,
 	uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ bg_color,
-	float* __restrict__ out_color)
+	float* __restrict__ out_color,
+	float* __restrict__ out_all_map,
+	float* __restrict__ out_plane_depth)
 {
 	// Identify current tile and associated min/max pixel range.
 	auto block = cg::this_thread_block();
@@ -280,6 +286,7 @@ renderCUDA(
 	uint2 pix = { pix_min.x + block.thread_index().x, pix_min.y + block.thread_index().y };
 	uint32_t pix_id = W * pix.y + pix.x;
 	float2 pixf = { (float)pix.x, (float)pix.y };
+	const float2 ray = { (pixf.x - cx) / focal_x, (pixf.y - cy) / focal_y };
 
 	// Check if this thread is associated with a valid pixel or outside.
 	bool inside = pix.x < W&& pix.y < H;
@@ -301,6 +308,7 @@ renderCUDA(
 	uint32_t contributor = 0;
 	uint32_t last_contributor = 0;
 	float C[CHANNELS] = { 0 };
+	float All_map[ALL_MAP] = { 0 };
 
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
@@ -353,6 +361,11 @@ renderCUDA(
 			// Eq. (3) from 3D Gaussian splatting paper.
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
+			if constexpr (RENDER_GEO)
+			{
+				for (int ch = 0; ch < ALL_MAP; ch++)
+					All_map[ch] += all_map[collected_id[j] * ALL_MAP + ch] * alpha * T;
+			}
 
 			T = test_T;
 
@@ -370,6 +383,12 @@ renderCUDA(
 		n_contrib[pix_id] = last_contributor;
 		for (int ch = 0; ch < CHANNELS; ch++)
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
+		if constexpr (RENDER_GEO)
+		{
+			for (int ch = 0; ch < ALL_MAP; ch++)
+				out_all_map[ch * H * W + pix_id] = All_map[ch];
+			out_plane_depth[pix_id] = All_map[4] / -(All_map[0] * ray.x + All_map[1] * ray.y + All_map[2] + 1.0e-8);
+		}
 	}
 }
 
@@ -378,28 +397,38 @@ void FORWARD::render(
 	const uint2* ranges,
 	const uint32_t* point_list,
 	int W, int H,
+	const float focal_x, const float focal_y,
+	const float cx, const float cy,
 	const float2* means2D,
 	const float* colors,
+	const float* all_map,
 	const float4* conic_opacity,
 	float* final_T,
 	uint32_t* n_contrib,
 	const float* bg_color,
-	float* out_color)
+	float* out_color,
+	float* out_all_map,
+	float* out_plane_depth,
+	const bool render_geo)
 {
-	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
-		ranges,
-		point_list,
-		W, H,
-		means2D,
-		colors,
-		conic_opacity,
-		final_T,
-		n_contrib,
-		bg_color,
-		out_color);
+	if (render_geo)
+		renderCUDA<NUM_CHANNELS, NUM_ALL_MAP, true><<<grid, block>>>(
+			ranges, point_list, W, H,
+			focal_x, focal_y, cx, cy,
+			means2D, colors, all_map, conic_opacity,
+			final_T, n_contrib, bg_color, out_color,
+			out_all_map, out_plane_depth);
+	else
+		renderCUDA<NUM_CHANNELS, NUM_ALL_MAP, false><<<grid, block>>>(
+			ranges, point_list, W, H,
+			focal_x, focal_y, cx, cy,
+			means2D, colors, all_map, conic_opacity,
+			final_T, n_contrib, bg_color, out_color,
+			out_all_map, out_plane_depth);
 }
 
-void FORWARD::preprocess(int P, int D, int M,
+void FORWARD::preprocess(
+	int P, int D, int M,
 	const float* means3D,
 	const glm::vec3* scales,
 	const float scale_modifier,
@@ -425,7 +454,7 @@ void FORWARD::preprocess(int P, int D, int M,
 	uint32_t* tiles_touched,
 	bool prefiltered)
 {
-	preprocessCUDA<NUM_CHANNELS> << <(P + 255) / 256, 256 >> > (
+	preprocessCUDA<NUM_CHANNELS> <<<(P + 255) / 256, 256 >>> (
 		P, D, M,
 		means3D,
 		scales,

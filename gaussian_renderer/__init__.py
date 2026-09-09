@@ -15,7 +15,8 @@ from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianR
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 
-def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
+def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None,
+           return_plane = True, return_depth_normal = True):
     """
     Render the scene. 
     
@@ -45,6 +46,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         sh_degree=pc.active_sh_degree,
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
+        render_geo=return_plane,
         debug=pipe.debug
     )
 
@@ -81,8 +83,21 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     else:
         colors_precomp = override_color
 
+    input_all_map = None
+    if return_plane:
+        global_normal = pc.get_normal(viewpoint_camera)
+        view_rotation = viewpoint_camera.world_view_transform[:3, :3]
+        local_normal = torch.nn.functional.normalize(global_normal @ view_rotation, dim=-1)
+        pts_in_cam = means3D @ view_rotation + viewpoint_camera.world_view_transform[3, :3]
+        local_distance = (local_normal * pts_in_cam).sum(-1).abs()
+        input_all_map = torch.zeros((means3D.shape[0], 5)).cuda().float()
+        input_all_map[:, :3] = local_normal
+        input_all_map[:, 3] = 1.0
+        input_all_map[:, 4] = local_distance
+
+
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, radii = rasterizer(
+    rendered_image, radii, out_all_map, plane_depth = rasterizer(
         means3D = means3D,
         means2D = means2D,
         shs = shs,
@@ -90,11 +105,22 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         opacities = opacity,
         scales = scales,
         rotations = rotations,
-        cov3D_precomp = cov3D_precomp)
+        cov3D_precomp = cov3D_precomp,
+        all_map = input_all_map,)
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
-    return {"render": rendered_image,
-            "viewspace_points": screenspace_points,
-            "visibility_filter" : radii > 0,
-            "radii": radii}
+    result = {"render": rendered_image,
+              "viewspace_points": screenspace_points,
+              "visibility_filter": radii > 0,
+              "radii": radii}
+    if return_plane:
+        result.update({
+            "rendered_normal": torch.nn.functional.normalize(out_all_map[:3], dim=0),
+            "rendered_alpha": out_all_map[3:4],
+            "plane_depth": plane_depth,
+        })
+        if return_depth_normal:
+            depth_normal = render_normal(viewpoint_camera, plane_depth.squeeze()) * out_all_map[3:4].detach()
+            result.update({"depth_normal": depth_normal})
+    return result
