@@ -38,6 +38,15 @@ class KernelSizeArgumentsTest(unittest.TestCase):
                         self.assertEqual(model.extract(get_combined_args(parser)).kernel_size, expected)
 
 
+class KernelSizeExtensionTest(unittest.TestCase):
+    def test_native_extension_loads(self):
+        # Detect unresolved C++ symbols even when GPU tests are skipped.
+        from diff_gaussian_rasterization import _C
+
+        self.assertTrue(callable(_C.rasterize_gaussians))
+        self.assertTrue(callable(_C.rasterize_gaussians_backward))
+
+
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA device required")
 class KernelSizeRasterizerTest(unittest.TestCase):
     def rasterize(self, kernel_size, covariance, opacity, render_geo=False):
