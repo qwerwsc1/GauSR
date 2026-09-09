@@ -143,6 +143,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}"})
                 progress_bar.update(10)
             if iteration == opt.iterations:
+                # record training time
+                import json
+                time = progress_bar.format_dict["elapsed"]
+                time_path = os.path.join(dataset.model_path, "training_time.json")
+                with open(time_path, "w") as f:
+                    json.dump({"training_time": progress_bar.format_interval(time)},f,indent=4)
                 progress_bar.close()
 
             # Log and save
