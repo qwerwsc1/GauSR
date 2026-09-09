@@ -29,12 +29,13 @@ from utils.sh_utils import eval_sh
 #     normal_ref = normal_ref.permute(2,0,1)
 #     return normal_ref
 
-def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None,
+def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, kernel_size: float, scaling_modifier = 1.0, override_color = None,
            return_plane = True, return_depth_normal = True):
     """
     Render the scene. 
     
     Background tensor (bg_color) must be on GPU!
+    kernel_size is the 2D filter variance added to the projected covariance.
     """
  
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
@@ -53,6 +54,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         image_width=int(viewpoint_camera.image_width),
         tanfovx=tanfovx,
         tanfovy=tanfovy,
+        kernel_size = kernel_size,
         bg=bg_color,
         scale_modifier=scaling_modifier,
         viewmatrix=viewpoint_camera.world_view_transform,

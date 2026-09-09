@@ -147,8 +147,11 @@ __global__ void computeCov2DCUDA(int P,
 	const float* cov3Ds,
 	const float h_x, float h_y,
 	const float tan_fovx, float tan_fovy,
+	const float kernel_size,
 	const float* view_matrix,
 	const float* dL_dconics,
+	const float* opacities,
+	float* dL_dopacity,
 	float3* dL_dmeans,
 	float* dL_dcov)
 {
@@ -194,9 +197,30 @@ __global__ void computeCov2DCUDA(int P,
 	glm::mat3 cov2D = glm::transpose(T) * glm::transpose(Vrk) * T;
 
 	// Use helper variables for 2D covariance entries. More compact.
-	float a = cov2D[0][0] += 0.3f;
+	const float raw_a = cov2D[0][0];
+	const float raw_c = cov2D[1][1];
+	float a = raw_a + kernel_size;
 	float b = cov2D[0][1];
-	float c = cov2D[1][1] += 0.3f;
+	float c = raw_c + kernel_size;
+
+	// Differentiate the same opacity compensation used in the forward pass.
+	const float det_0_raw = raw_a * raw_c - b * b;
+	const float det_1_raw = a * c - b * b;
+	const float det_0 = fmaxf(1e-6f, det_0_raw);
+	const float det_1 = fmaxf(1e-6f, det_1_raw);
+	const float coef = sqrtf(det_0 / det_1);
+	const float dL_dcoef = dL_dopacity[idx] * opacities[idx];
+	dL_dopacity[idx] *= coef;
+	float dcoef_da = 0, dcoef_db = 0, dcoef_dc = 0;
+	if (kernel_size > 0.0f)
+	{
+		// Respect determinant clamping and the square-root chain rule.
+		const float dL_ddet0 = det_0_raw > 1e-6f ? 0.5f * dL_dcoef / (coef * det_1) : 0.0f;
+		const float dL_ddet1 = det_1_raw > 1e-6f ? -0.5f * dL_dcoef * coef / det_1 : 0.0f;
+		dcoef_da = dL_ddet0 * raw_c + dL_ddet1 * c;
+		dcoef_db = -2.0f * b * (dL_ddet0 + dL_ddet1);
+		dcoef_dc = dL_ddet0 * raw_a + dL_ddet1 * a;
+	}
 
 	float denom = a * c - b * b;
 	float dL_da = 0, dL_db = 0, dL_dc = 0;
@@ -210,6 +234,9 @@ __global__ void computeCov2DCUDA(int P,
 		dL_da = denom2inv * (-c * c * dL_dconic.x + 2 * b * c * dL_dconic.y + (denom - a * c) * dL_dconic.z);
 		dL_dc = denom2inv * (-a * a * dL_dconic.z + 2 * a * b * dL_dconic.y + (denom - a * c) * dL_dconic.x);
 		dL_db = denom2inv * 2 * (b * c * dL_dconic.x - (denom + 2 * b * b) * dL_dconic.y + a * b * dL_dconic.z);
+		dL_da += dcoef_da;
+		dL_db += dcoef_db;
+		dL_dc += dcoef_dc;
 
 		// Gradients of loss L w.r.t. each 3D covariance matrix (Vrk) entry, 
 		// given gradients w.r.t. 2D covariance matrix (diagonal).
@@ -617,9 +644,12 @@ void BACKWARD::preprocess(
 	const float* projmatrix,
 	const float focal_x, float focal_y,
 	const float tan_fovx, float tan_fovy,
+	const float kernel_size,
 	const glm::vec3* campos,
 	const float3* dL_dmean2D,
 	const float* dL_dconic,
+	const float* opacities,
+	float* dL_dopacity,
 	glm::vec3* dL_dmean3D,
 	float* dL_dcolor,
 	float* dL_dcov3D,
@@ -640,8 +670,11 @@ void BACKWARD::preprocess(
 		focal_y,
 		tan_fovx,
 		tan_fovy,
+		kernel_size,
 		viewmatrix,
 		dL_dconic,
+		opacities,
+		dL_dopacity,
 		(float3*)dL_dmean3D,
 		dL_dcov3D);
 

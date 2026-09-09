@@ -74,6 +74,7 @@ class _RasterizeGaussians(torch.autograd.Function):
             raster_settings.projmatrix,
             raster_settings.tanfovx,
             raster_settings.tanfovy,
+            raster_settings.kernel_size,
             raster_settings.image_height,
             raster_settings.image_width,
             sh,
@@ -99,7 +100,7 @@ class _RasterizeGaussians(torch.autograd.Function):
         # Keep relevant tensors for backward
         ctx.raster_settings = raster_settings
         ctx.num_rendered = num_rendered
-        ctx.save_for_backward(out_all_map, colors_precomp, all_map, means3D, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer)
+        ctx.save_for_backward(out_all_map, colors_precomp, opacities, all_map, means3D, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer)
         return color, radii, out_all_map, out_plane_depth
 
     @staticmethod
@@ -108,7 +109,7 @@ class _RasterizeGaussians(torch.autograd.Function):
         # Restore necessary values from context
         num_rendered = ctx.num_rendered
         raster_settings = ctx.raster_settings
-        all_map_pixels, colors_precomp, all_map, means3D, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer = ctx.saved_tensors
+        all_map_pixels, colors_precomp, opacities, all_map, means3D, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer = ctx.saved_tensors
 
         # PyTorch passes None for outputs that do not participate in the loss.
         # The CUDA binding expects concrete, contiguous gradient tensors.
@@ -125,6 +126,7 @@ class _RasterizeGaussians(torch.autograd.Function):
                 means3D, 
                 radii, 
                 colors_precomp, 
+                opacities,
                 all_map,
                 scales, 
                 rotations, 
@@ -134,6 +136,7 @@ class _RasterizeGaussians(torch.autograd.Function):
                 raster_settings.projmatrix, 
                 raster_settings.tanfovx, 
                 raster_settings.tanfovy, 
+                raster_settings.kernel_size,
                 grad_out_color, 
                 grad_out_all_map,
                 grad_out_plane_depth,
@@ -179,6 +182,7 @@ class GaussianRasterizationSettings(NamedTuple):
     image_width: int 
     tanfovx : float
     tanfovy : float
+    kernel_size: float
     bg : torch.Tensor
     scale_modifier : float
     viewmatrix : torch.Tensor

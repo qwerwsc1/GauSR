@@ -10,6 +10,7 @@
 #
 
 from argparse import ArgumentParser, Namespace
+import math
 import sys
 import os
 
@@ -54,11 +55,17 @@ class ModelParams(ParamGroup):
         self._white_background = False
         self.data_device = "cuda"
         self.eval = False
+        self.kernel_size = 0.0  # Variance of the 2D filter, as in RaDe-GS.
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
         g = super().extract(args)
         g.source_path = os.path.abspath(g.source_path)
+        # Older cfg_args files do not contain kernel_size.
+        if getattr(g, "kernel_size", None) is None:
+            g.kernel_size = self.kernel_size
+        if not math.isfinite(g.kernel_size) or g.kernel_size < 0:
+            raise ValueError("kernel_size must be finite and non-negative")
         return g
 
 class PipelineParams(ParamGroup):

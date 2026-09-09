@@ -10,6 +10,7 @@
  */
 
 #include <math.h>
+#include <cmath>
 #include <torch/extension.h>
 #include <cstdio>
 #include <sstream>
@@ -47,6 +48,7 @@ RasterizeGaussiansCUDA(
 	const torch::Tensor& projmatrix,
 	const float tan_fovx, 
 	const float tan_fovy,
+    const float kernel_size,
     const int image_height,
     const int image_width,
 	const torch::Tensor& sh,
@@ -56,6 +58,8 @@ RasterizeGaussiansCUDA(
 	const bool render_geo,
 	const bool debug)
 {
+  TORCH_CHECK(std::isfinite(kernel_size) && kernel_size >= 0.0f,
+              "kernel_size must be finite and non-negative");
   if (means3D.ndimension() != 2 || means3D.size(1) != 3) {
     AT_ERROR("means3D must have dimensions (num_points, 3)");
   }
@@ -114,6 +118,7 @@ RasterizeGaussiansCUDA(
 		campos.contiguous().data_ptr<float>(),
 		tan_fovx,
 		tan_fovy,
+		kernel_size,
 		prefiltered,
 		out_color.contiguous().data_ptr<float>(),
 		radii.contiguous().data_ptr<int>(),
@@ -132,6 +137,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	const torch::Tensor& means3D,
 	const torch::Tensor& radii,
     const torch::Tensor& colors,
+	const torch::Tensor& opacity,
 	const torch::Tensor& all_map,
 	const torch::Tensor& scales,
 	const torch::Tensor& rotations,
@@ -141,6 +147,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
     const torch::Tensor& projmatrix,
 	const float tan_fovx,
 	const float tan_fovy,
+    const float kernel_size,
     const torch::Tensor& dL_dout_color,
 	const torch::Tensor& dL_dout_all_map,
 	const torch::Tensor& dL_dout_plane_depth,
@@ -154,6 +161,8 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	const bool render_geo,
 	const bool debug) 
 {
+  TORCH_CHECK(std::isfinite(kernel_size) && kernel_size >= 0.0f,
+              "kernel_size must be finite and non-negative");
   const int P = means3D.size(0);
   const int H = dL_dout_color.size(1);
   const int W = dL_dout_color.size(2);
@@ -185,6 +194,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 		means3D.contiguous().data_ptr<float>(),
 		sh.contiguous().data_ptr<float>(),
 		colors.contiguous().data_ptr<float>(),
+		opacity.contiguous().data_ptr<float>(),
 		all_map.contiguous().data_ptr<float>(),
 		scales.data_ptr<float>(),
 		scale_modifier,
@@ -195,6 +205,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 		campos.contiguous().data_ptr<float>(),
 		tan_fovx,
 		tan_fovy,
+		kernel_size,
 		radii.contiguous().data_ptr<int>(),
 		reinterpret_cast<char*>(geomBuffer.contiguous().data_ptr()),
 		reinterpret_cast<char*>(binningBuffer.contiguous().data_ptr()),
