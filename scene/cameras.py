@@ -13,6 +13,7 @@ import torch
 from torch import nn
 import numpy as np
 from utils.graphics_utils import getWorld2View2, getProjectionMatrix
+import math
 
 class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy, image, gt_alpha_mask,
@@ -44,6 +45,11 @@ class Camera(nn.Module):
             self.original_image *= gt_alpha_mask.to(self.data_device)
         else:
             self.original_image *= torch.ones((1, self.image_height, self.image_width), device=self.data_device)
+
+        self.Fx = self.image_width / (2 * math.tan(self.FoVx / 2.))
+        self.Fy = self.image_height / (2 * math.tan(self.FoVy / 2.))
+        self.Cx = float(self.image_width - 1) / 2
+        self.Cy = float(self.image_height - 1) / 2
 
         self.zfar = 100.0
         self.znear = 0.01

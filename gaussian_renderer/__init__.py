@@ -15,6 +15,20 @@ from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianR
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 
+# def render_normal(viewpoint_cam, depth, offset=None, normal=None, scale=1):
+#     # depth: (H, W), bg_color: (3), alpha: (H, W)
+#     # normal_ref: (3, H, W)
+#     intrinsic_matrix, extrinsic_matrix = viewpoint_cam.get_calib_matrix_nerf(scale=scale)
+#     st = max(int(scale/2)-1,0)
+#     if offset is not None:
+#         offset = offset[st::scale,st::scale]
+#     normal_ref = normal_from_depth_image(depth[st::scale,st::scale], 
+#                                             intrinsic_matrix.to(depth.device), 
+#                                             extrinsic_matrix.to(depth.device), offset)
+
+#     normal_ref = normal_ref.permute(2,0,1)
+#     return normal_ref
+
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None,
            return_plane = True, return_depth_normal = True):
     """
@@ -120,7 +134,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             "rendered_alpha": out_all_map[3:4],
             "plane_depth": plane_depth,
         })
-        if return_depth_normal:
-            depth_normal = render_normal(viewpoint_camera, plane_depth.squeeze()) * out_all_map[3:4].detach()
-            result.update({"depth_normal": depth_normal})
+        # if return_depth_normal:
+        #     depth_normal = render_normal(viewpoint_camera, plane_depth.squeeze()) * out_all_map[3:4].detach()
+        #     result.update({"depth_normal": depth_normal})
     return result

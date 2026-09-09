@@ -105,6 +105,34 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             normal_error_map = 1 - torch.linalg.vecdot(rendered_normal, depth_normal, dim=0)
             loss += normal_error_map.mean()
             
+        if iteration % 200 == 0 and iteration>opt.single_view_weight_from_iter:
+            import cv2
+            import numpy as np
+            gt_img_show = (viewpoint_cam.original_image.permute(1, 2, 0).clamp(0, 1)[:, :, [2, 1, 0]] * 255).detach().cpu().numpy().astype(np.uint8)
+            img_show = ((render_pkg["render"]).permute(1, 2, 0).clamp(0, 1)[:, :, [2, 1, 0]] * 255).detach().cpu().numpy().astype(np.uint8)
+            normal_show = (((render_pkg["rendered_normal"] + 1.0) * 0.5).permute(1, 2, 0).clamp(0, 1) * 255).detach().cpu().numpy().astype(np.uint8)
+            # depth_normal_show = (((depth_normal + 1.0) * 0.5).permute(1, 2, 0).clamp(0, 1) * 255).detach().cpu().numpy().astype(np.uint8)
+            # d_mask_show = (weights.float() * 255).detach().cpu().numpy().astype(np.uint8)
+            # d_mask_show_color = cv2.applyColorMap(d_mask_show, cv2.COLORMAP_MAGMA)
+            edepth = render_pkg["plane_depth"].squeeze().detach().cpu().numpy()
+            edepth_i = (edepth - edepth.min()) / (edepth.max() - edepth.min() + 1e-20)
+            edepth_i = (edepth_i * 255).clip(0, 255).astype(np.uint8)
+            edepth_color = cv2.applyColorMap(edepth_i, cv2.COLORMAP_MAGMA)
+
+            # mdepth = render_pkg["median_depth"].squeeze().detach().cpu().numpy()
+            # mdepth_i = (mdepth - mdepth.min()) / (mdepth.max() - mdepth.min() + 1e-20)
+            # mdepth_i = (mdepth_i * 255).clip(0, 255).astype(np.uint8)
+            # mdepth_color = cv2.applyColorMap(mdepth_i, cv2.COLORMAP_MAGMA)
+            row0 = np.concatenate([gt_img_show, img_show, edepth_color, normal_show], axis=1)
+            # row0 = np.concatenate([gt_img_show, img_show], axis=1)
+            # row1 = np.concatenate([d_mask_show_color, depth_color, normal_show], axis=1)
+            image_to_show = np.concatenate([row0], axis=0)
+            debug_dir = os.path.join(dataset.model_path, "debug")
+            os.makedirs(debug_dir, exist_ok=True)
+            debug_path = os.path.join(debug_dir, "%05d" % iteration + "_" + viewpoint_cam.image_name + ".jpg")
+            if not cv2.imwrite(debug_path, image_to_show):
+                raise OSError(f"Failed to save debug image: {debug_path}")
+
         loss.backward()
         iter_end.record()
 
