@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2023, Inria
- * GRAPHDECO research group, https://team.inria.fr/graphdeco
+ * GRAPHDECO research group
  * All rights reserved.
  *
  * This software is free for non-commercial, research and evaluation use 
@@ -30,7 +30,7 @@ namespace BACKWARD
 		const float2* means2D,
 		const float4* conic_opacity,
 		const float* colors,
-		const float* all_map,
+		const float* all_maps,
 		const float* all_map_pixels,
 		const float* final_Ts,
 		const uint32_t* n_contrib,
@@ -38,6 +38,7 @@ namespace BACKWARD
 		const float* dL_dout_all_map,
 		const float* dL_dout_plane_depth,
 		float3* dL_dmean2D,
+		float3* dL_dmean2D_abs,
 		float4* dL_dconic2D,
 		float* dL_dopacity,
 		float* dL_dcolors,
@@ -58,12 +59,9 @@ namespace BACKWARD
 		const float* proj,
 		const float focal_x, float focal_y,
 		const float tan_fovx, float tan_fovy,
-		const float kernel_size,
 		const glm::vec3* campos,
 		const float3* dL_dmean2D,
 		const float* dL_dconics,
-		const float* opacities,
-		float* dL_dopacity,
 		glm::vec3* dL_dmeans,
 		float* dL_dcolor,
 		float* dL_dcov3D,

@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2023, Inria
- * GRAPHDECO research group, https://team.inria.fr/graphdeco
+ * GRAPHDECO research group
  * All rights reserved.
  *
  * This software is free for non-commercial, research and evaluation use 
@@ -48,10 +48,10 @@ namespace CudaRasterizer
 			const float* projmatrix,
 			const float* cam_pos,
 			const float tan_fovx, float tan_fovy,
-			const float kernel_size,
 			const bool prefiltered,
 			float* out_color,
 			int* radii,
+			int* out_observe,
 			float* out_all_map,
 			float* out_plane_depth,
 			const bool render_geo,
@@ -65,8 +65,7 @@ namespace CudaRasterizer
 			const float* means3D,
 			const float* shs,
 			const float* colors_precomp,
-			const float* opacities,
-			const float* all_map,
+			const float* all_maps,
 			const float* scales,
 			const float scale_modifier,
 			const float* rotations,
@@ -75,7 +74,6 @@ namespace CudaRasterizer
 			const float* projmatrix,
 			const float* campos,
 			const float tan_fovx, float tan_fovy,
-			const float kernel_size,
 			const int* radii,
 			char* geom_buffer,
 			char* binning_buffer,
@@ -84,6 +82,7 @@ namespace CudaRasterizer
 			const float* dL_dout_all_map,
 			const float* dL_dout_plane_depth,
 			float* dL_dmean2D,
+			float* dL_dmean2D_abs,
 			float* dL_dconic,
 			float* dL_dopacity,
 			float* dL_dcolor,

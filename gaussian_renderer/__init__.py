@@ -29,7 +29,7 @@ from utils.sh_utils import eval_sh
 #     normal_ref = normal_ref.permute(2,0,1)
 #     return normal_ref
 
-def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, kernel_size: float, scaling_modifier = 1.0, override_color = None,
+def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None,
            return_plane = True, return_depth_normal = True):
     """
     Render the scene. 
@@ -40,8 +40,10 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
  
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
     screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
+    screenspace_points_abs = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
     try:
         screenspace_points.retain_grad()
+        screenspace_points_abs.retain_grad()
     except:
         pass
 
@@ -54,7 +56,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         image_width=int(viewpoint_camera.image_width),
         tanfovx=tanfovx,
         tanfovy=tanfovy,
-        kernel_size = kernel_size,
+        # kernel_size = kernel_size,
         bg=bg_color,
         scale_modifier=scaling_modifier,
         viewmatrix=viewpoint_camera.world_view_transform,
@@ -70,6 +72,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
     means3D = pc.get_xyz
     means2D = screenspace_points
+    means2D_abs = screenspace_points_abs
     opacity = pc.get_opacity
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
@@ -113,9 +116,10 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, radii, out_all_map, plane_depth = rasterizer(
+    rendered_image, radii, out_observe, out_all_map, plane_depth = rasterizer(
         means3D = means3D,
         means2D = means2D,
+        means2D_abs = means2D_abs,
         shs = shs,
         colors_precomp = colors_precomp,
         opacities = opacity,

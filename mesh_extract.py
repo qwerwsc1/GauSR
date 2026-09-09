@@ -40,7 +40,7 @@ def post_process_mesh(mesh, cluster_to_keep=1):
 def extract_mesh(dataset, pipe, iteration, num_cluster=1):
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
-    kernel_size = dataset.kernel_size
+    # kernel_size = dataset.kernel_size
     depth_name = "plane_depth" # if dataset.depth_ratio < 0.5 else "median_depth"
 
     bg_color = [1, 1, 1]
@@ -51,7 +51,7 @@ def extract_mesh(dataset, pipe, iteration, num_cluster=1):
     color_list = []
     for viewpoint_cam in viewpoint_cam_list:
         # Rendering offscreen from that camera
-        render_pkg = render(viewpoint_cam, gaussians, pipe, background, kernel_size)
+        render_pkg = render(viewpoint_cam, gaussians, pipe, background)
         rendered_img = torch.clamp(render_pkg["render"], min=0, max=1.0).cpu().numpy().transpose(1, 2, 0)
         color_list.append(np.ascontiguousarray(rendered_img))
         depth = render_pkg[depth_name].clone()

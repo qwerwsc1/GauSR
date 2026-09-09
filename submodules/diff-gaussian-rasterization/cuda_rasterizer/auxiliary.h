@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2023, Inria
- * GRAPHDECO research group, https://team.inria.fr/graphdeco
+ * GRAPHDECO research group
  * All rights reserved.
  *
  * This software is free for non-commercial, research and evaluation use 
@@ -136,8 +136,7 @@ __forceinline__ __device__ float sigmoid(float x)
 	return 1.0f / (1.0f + expf(-x));
 }
 
-__forceinline__ __device__ bool in_frustum(
-	int idx,
+__forceinline__ __device__ bool in_frustum(int idx,
 	const float* orig_points,
 	const float* viewmatrix,
 	const float* projmatrix,

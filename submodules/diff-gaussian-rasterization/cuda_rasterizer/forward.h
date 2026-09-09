@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2023, Inria
- * GRAPHDECO research group, https://team.inria.fr/graphdeco
+ * GRAPHDECO research group
  * All rights reserved.
  *
  * This software is free for non-commercial, research and evaluation use 
@@ -21,8 +21,7 @@
 namespace FORWARD
 {
 	// Perform initial steps for each Gaussian prior to rasterization.
-	void preprocess(
-		int P, int D, int M,
+	void preprocess(int P, int D, int M,
 		const float* orig_points,
 		const glm::vec3* scales,
 		const float scale_modifier,
@@ -38,7 +37,6 @@ namespace FORWARD
 		const int W, int H,
 		const float focal_x, float focal_y,
 		const float tan_fovx, float tan_fovy,
-		const float kernel_size,
 		int* radii,
 		float2* points_xy_image,
 		float* depths,
@@ -57,6 +55,8 @@ namespace FORWARD
 		int W, int H,
 		const float focal_x, const float focal_y,
 		const float cx, const float cy,
+		const float* viewmatrix,
+		const float* cam_pos,
 		const float2* points_xy_image,
 		const float* features,
 		const float* all_map,
@@ -65,6 +65,7 @@ namespace FORWARD
 		uint32_t* n_contrib,
 		const float* bg_color,
 		float* out_color,
+		int* out_observe,
 		float* out_all_map,
 		float* out_plane_depth,
 		const bool render_geo);

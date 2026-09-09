@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2023, Inria
- * GRAPHDECO research group, https://team.inria.fr/graphdeco
+ * GRAPHDECO research group
  * All rights reserved.
  *
  * This software is free for non-commercial, research and evaluation use 
@@ -147,11 +147,8 @@ __global__ void computeCov2DCUDA(int P,
 	const float* cov3Ds,
 	const float h_x, float h_y,
 	const float tan_fovx, float tan_fovy,
-	const float kernel_size,
 	const float* view_matrix,
 	const float* dL_dconics,
-	const float* opacities,
-	float* dL_dopacity,
 	float3* dL_dmeans,
 	float* dL_dcov)
 {
@@ -197,30 +194,9 @@ __global__ void computeCov2DCUDA(int P,
 	glm::mat3 cov2D = glm::transpose(T) * glm::transpose(Vrk) * T;
 
 	// Use helper variables for 2D covariance entries. More compact.
-	const float raw_a = cov2D[0][0];
-	const float raw_c = cov2D[1][1];
-	float a = raw_a + kernel_size;
+	float a = cov2D[0][0] += 0.3f;
 	float b = cov2D[0][1];
-	float c = raw_c + kernel_size;
-
-	// Differentiate the same opacity compensation used in the forward pass.
-	const float det_0_raw = raw_a * raw_c - b * b;
-	const float det_1_raw = a * c - b * b;
-	const float det_0 = fmaxf(1e-6f, det_0_raw);
-	const float det_1 = fmaxf(1e-6f, det_1_raw);
-	const float coef = sqrtf(det_0 / det_1);
-	const float dL_dcoef = dL_dopacity[idx] * opacities[idx];
-	dL_dopacity[idx] *= coef;
-	float dcoef_da = 0, dcoef_db = 0, dcoef_dc = 0;
-	if (kernel_size > 0.0f)
-	{
-		// Respect determinant clamping and the square-root chain rule.
-		const float dL_ddet0 = det_0_raw > 1e-6f ? 0.5f * dL_dcoef / (coef * det_1) : 0.0f;
-		const float dL_ddet1 = det_1_raw > 1e-6f ? -0.5f * dL_dcoef * coef / det_1 : 0.0f;
-		dcoef_da = dL_ddet0 * raw_c + dL_ddet1 * c;
-		dcoef_db = -2.0f * b * (dL_ddet0 + dL_ddet1);
-		dcoef_dc = dL_ddet0 * raw_a + dL_ddet1 * a;
-	}
+	float c = cov2D[1][1] += 0.3f;
 
 	float denom = a * c - b * b;
 	float dL_da = 0, dL_db = 0, dL_dc = 0;
@@ -234,9 +210,6 @@ __global__ void computeCov2DCUDA(int P,
 		dL_da = denom2inv * (-c * c * dL_dconic.x + 2 * b * c * dL_dconic.y + (denom - a * c) * dL_dconic.z);
 		dL_dc = denom2inv * (-a * a * dL_dconic.z + 2 * a * b * dL_dconic.y + (denom - a * c) * dL_dconic.x);
 		dL_db = denom2inv * 2 * (b * c * dL_dconic.x - (denom + 2 * b * b) * dL_dconic.y + a * b * dL_dconic.z);
-		dL_da += dcoef_da;
-		dL_db += dcoef_db;
-		dL_dc += dcoef_dc;
 
 		// Gradients of loss L w.r.t. each 3D covariance matrix (Vrk) entry, 
 		// given gradients w.r.t. 2D covariance matrix (diagonal).
@@ -423,7 +396,7 @@ __global__ void preprocessCUDA(
 }
 
 // Backward version of the rendering procedure.
-template <uint32_t C, uint32_t MAP_N, bool RENDER_GEO>
+template <uint32_t C,uint32_t MAP_N>
 __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 renderCUDA(
 	const uint2* __restrict__ ranges,
@@ -434,7 +407,7 @@ renderCUDA(
 	const float2* __restrict__ points_xy_image,
 	const float4* __restrict__ conic_opacity,
 	const float* __restrict__ colors,
-	const float* __restrict__ all_map,
+	const float* __restrict__ all_maps,
 	const float* __restrict__ all_map_pixels,
 	const float* __restrict__ final_Ts,
 	const uint32_t* __restrict__ n_contrib,
@@ -442,10 +415,12 @@ renderCUDA(
 	const float* __restrict__ dL_dout_all_maps,
 	const float* __restrict__ dL_dout_plane_depths,
 	float3* __restrict__ dL_dmean2D,
+	float3* __restrict__ dL_dmean2D_abs,
 	float4* __restrict__ dL_dconic2D,
 	float* __restrict__ dL_dopacity,
 	float* __restrict__ dL_dcolors,
-	float* __restrict__ dL_dall_map)
+	float* __restrict__ dL_dall_map,
+	const bool render_geo)
 {
 	// We rasterize again. Compute necessary block info.
 	auto block = cg::this_thread_block();
@@ -469,7 +444,7 @@ renderCUDA(
 	__shared__ float2 collected_xy[BLOCK_SIZE];
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
 	__shared__ float collected_colors[C * BLOCK_SIZE];
-	__shared__ float collected_all_map[MAP_N * BLOCK_SIZE];
+	__shared__ float collected_all_maps[MAP_N * BLOCK_SIZE];
 
 	// In the forward, we stored the final value for T, the
 	// product of all (1 - alpha) factors. 
@@ -482,18 +457,20 @@ renderCUDA(
 	const int last_contributor = inside ? n_contrib[pix_id] : 0;
 
 	float accum_rec[C] = { 0 };
-	float dL_dpixel[C];
 	float accum_all_map[MAP_N] = { 0 };
-	float dL_dout_all_map[MAP_N] = { 0 };
-
-	if (inside)
-	{
-		for (int i = 0; i < C; i++)
+	float dL_dpixel[C];
+	float dL_dout_all_map[MAP_N];
+	// float grad_sum = 0;
+	if (inside) {
+		for (int i = 0; i < C; i++) {
 			dL_dpixel[i] = dL_dpixels[i * H * W + pix_id];
-		if constexpr (RENDER_GEO)
-		{
-			for (int i = 0; i < MAP_N; i++)
+			// grad_sum += fabs(dL_dpixel[i]);
+		}
+		if(render_geo) {
+			for (int i = 0; i < MAP_N; i++) {
 				dL_dout_all_map[i] = dL_dout_all_maps[i * H * W + pix_id];
+				// grad_sum += fabs(dL_dout_all_map[i]);
+			}
 			const float3 normal = {all_map_pixels[pix_id], all_map_pixels[H * W + pix_id], all_map_pixels[2 * H * W + pix_id]};
 			const float distance = all_map_pixels[4 * H * W + pix_id];
 			const float tmp = (normal.x * ray.x + normal.y * ray.y + normal.z + 1.0e-8);
@@ -503,6 +480,11 @@ renderCUDA(
 			dL_dout_all_map[2] += dL_dout_plane_depths[pix_id] * (distance / (tmp * tmp));
 		}
 	}
+	// If grad is too small, skip
+	// if (grad_sum < 0.000001f) {
+	// 	done = true;
+	// }
+
 	float last_alpha = 0;
 	float last_color[C] = { 0 };
 	float last_all_map[MAP_N] = { 0 };
@@ -527,9 +509,9 @@ renderCUDA(
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
 			for (int i = 0; i < C; i++)
 				collected_colors[i * BLOCK_SIZE + block.thread_rank()] = colors[coll_id * C + i];
-			if constexpr (RENDER_GEO) {
+			if (render_geo) {
 				for (int i = 0; i < MAP_N; i++)
-					collected_all_map[i * BLOCK_SIZE + block.thread_rank()] = all_map[coll_id * MAP_N + i];
+					collected_all_maps[i * BLOCK_SIZE + block.thread_rank()] = all_maps[coll_id * MAP_N + i];
 			}
 		}
 		block.sync();
@@ -578,11 +560,10 @@ renderCUDA(
 				// many that were affected by this Gaussian.
 				atomicAdd(&(dL_dcolors[global_id * C + ch]), dchannel_dcolor * dL_dchannel);
 			}
-			if constexpr (RENDER_GEO)
-			{
+			if (render_geo) {
 				for (int ch = 0; ch < MAP_N; ch++)
 				{
-					const float c = collected_all_map[ch * BLOCK_SIZE + j];
+					const float c = collected_all_maps[ch * BLOCK_SIZE + j];
 					// Update last color (to be used in the next iteration)
 					accum_all_map[ch] = last_alpha * last_all_map[ch] + (1.f - last_alpha) * accum_all_map[ch];
 					last_all_map[ch] = c;
@@ -618,6 +599,8 @@ renderCUDA(
 			// Update gradients w.r.t. 2D mean position of the Gaussian
 			atomicAdd(&dL_dmean2D[global_id].x, dL_dG * dG_ddelx * ddelx_dx);
 			atomicAdd(&dL_dmean2D[global_id].y, dL_dG * dG_ddely * ddely_dy);
+			atomicAdd(&dL_dmean2D_abs[global_id].x, fabs(dL_dG * dG_ddelx * ddelx_dx));
+			atomicAdd(&dL_dmean2D_abs[global_id].y, fabs(dL_dG * dG_ddely * ddely_dy));
 
 			// Update gradients w.r.t. 2D covariance (2x2 matrix, symmetric)
 			atomicAdd(&dL_dconic2D[global_id].x, -0.5f * gdx * d.x * dL_dG);
@@ -644,12 +627,9 @@ void BACKWARD::preprocess(
 	const float* projmatrix,
 	const float focal_x, float focal_y,
 	const float tan_fovx, float tan_fovy,
-	const float kernel_size,
 	const glm::vec3* campos,
 	const float3* dL_dmean2D,
 	const float* dL_dconic,
-	const float* opacities,
-	float* dL_dopacity,
 	glm::vec3* dL_dmean3D,
 	float* dL_dcolor,
 	float* dL_dcov3D,
@@ -670,11 +650,8 @@ void BACKWARD::preprocess(
 		focal_y,
 		tan_fovx,
 		tan_fovy,
-		kernel_size,
 		viewmatrix,
 		dL_dconic,
-		opacities,
-		dL_dopacity,
 		(float3*)dL_dmean3D,
 		dL_dcov3D);
 
@@ -711,34 +688,43 @@ void BACKWARD::render(
 	const float2* means2D,
 	const float4* conic_opacity,
 	const float* colors,
-	const float* all_map,
+	const float* all_maps,
 	const float* all_map_pixels,
 	const float* final_Ts,
 	const uint32_t* n_contrib,
 	const float* dL_dpixels,
 	const float* dL_dout_all_map,
-	const float* dL_dout_plane_depths,
+	const float* dL_dout_plane_depth,
 	float3* dL_dmean2D,
+	float3* dL_dmean2D_abs,
 	float4* dL_dconic2D,
 	float* dL_dopacity,
 	float* dL_dcolors,
 	float* dL_dall_map,
 	const bool render_geo)
 {
-	if (render_geo)
-		renderCUDA<NUM_CHANNELS, NUM_ALL_MAP, true><<<grid, block>>>(
-			ranges, point_list, W, H, fx, fy,
-			bg_color, means2D, conic_opacity, colors,
-			all_map, all_map_pixels, final_Ts, n_contrib,
-			dL_dpixels, dL_dout_all_map, dL_dout_plane_depths,
-			dL_dmean2D, dL_dconic2D, dL_dopacity,
-			dL_dcolors, dL_dall_map);
-	else
-		renderCUDA<NUM_CHANNELS, NUM_ALL_MAP, false><<<grid, block>>>(
-			ranges, point_list, W, H, fx, fy,
-			bg_color, means2D, conic_opacity, colors,
-			all_map, all_map_pixels, final_Ts, n_contrib,
-			dL_dpixels, dL_dout_all_map, dL_dout_plane_depths,
-			dL_dmean2D, dL_dconic2D, dL_dopacity,
-			dL_dcolors, dL_dall_map);
+	renderCUDA<NUM_CHANNELS,NUM_ALL_MAP> << <grid, block >> >(
+		ranges,
+		point_list,
+		W, H,
+		fx, fy,
+		bg_color,
+		means2D,
+		conic_opacity,
+		colors,
+		all_maps,
+		all_map_pixels,
+		final_Ts,
+		n_contrib,
+		dL_dpixels,
+		dL_dout_all_map,
+		dL_dout_plane_depth,
+		dL_dmean2D,
+		dL_dmean2D_abs,
+		dL_dconic2D,
+		dL_dopacity,
+		dL_dcolors,
+		dL_dall_map,
+		render_geo
+		);
 }
