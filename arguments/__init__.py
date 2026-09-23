@@ -54,14 +54,7 @@ class ModelParams(ParamGroup):
         self._white_background = False
         self.data_device = "cuda"
         self.eval = False
-        self.kernel_size = 0.0 # Size of 2D filter in mip-splatting
-        
-        self.depth_ratio = 0.0
-
-        self.multi_view_num = 8
-        self.multi_view_max_angle = 30
-        self.multi_view_min_dis = 0.01
-        self.multi_view_max_dis = 1.5
+        self.render_items = ['RGB', 'Alpha', 'Normal', 'Depth', 'Edge', 'Curvature']
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -73,6 +66,7 @@ class PipelineParams(ParamGroup):
     def __init__(self, parser):
         self.convert_SHs_python = False
         self.compute_cov3D_python = False
+        self.depth_ratio = 0.0
         self.debug = False
         super().__init__(parser, "Pipeline Parameters")
 
@@ -89,19 +83,15 @@ class OptimizationParams(ParamGroup):
         self.rotation_lr = 0.001
         self.percent_dense = 0.01
         self.lambda_dssim = 0.2
-        self.lambda_depth_normal = 0.05
+        self.lambda_dist = 0.0
+        self.lambda_normal = 0.05
+        self.opacity_cull = 0.05
+
         self.densification_interval = 100
         self.opacity_reset_interval = 3000
         self.densify_from_iter = 500
         self.densify_until_iter = 15_000
         self.densify_grad_threshold = 0.0002
-        self.random_background = False
-
-        self.regularization_from_iter = 7_000
-        self.lambda_multi_view_geo = 0.02
-        self.lambda_multi_view_ncc = 0.3
-        self.multi_view_patch_size = 3
-        self.multi_view_pixel_noise_th = 1.0
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):

@@ -25,7 +25,7 @@ def extract_depth_from_mesh(mesh,
     #mesh = trimesh.load("/home/yuzh/mnt/A100_data/sdfstudio/meshes_tnt/bakedangelo/Caterpillar_fullres_1024.ply")
     #mesh = trimesh.load("/home/yuzh/mnt/A100_data/sdfstudio/meshes_tnt/bakedangelo/Truck_fullres_1024.ply")
     #mesh = trimesh.load("/home/yuzh/mnt/A3_data/sdfstudio/meshes_tnt/bakedangelo/Meetingroom_fullres_1024_scaleback.ply")
-    # mesh = trimesh.load("/home/yuzh/mnt/A3_data/sdfstudio/meshes_tnt/bakedangelo/Barn_fullres_1024.ply")
+    mesh = trimesh.load("/home/yuzh/mnt/A3_data/sdfstudio/meshes_tnt/bakedangelo/Barn_fullres_1024.ply")
     mesh = pyrender.Mesh.from_trimesh(mesh)
     scene.add(mesh)
     """
@@ -133,7 +133,7 @@ class Mesher(object):
                 points = pnts.to(device).float()
                 c2w = estimate_c2w_list[i].to(device).float()
                 # transform to opencv coordinate as nerfstudio dataparser's .json file is in opengl coordinate
-                # c2w[:3, 1:3] *= -1
+                c2w[:3, 1:3] *= -1
 
                 depth = depth_list[i].to(device)
                 w2c = torch.inverse(c2w).to(device).float()
@@ -173,7 +173,6 @@ class Mesher(object):
                 forecast_frustum = in_frustum | forecast_frustum
                 valid_forecast = valid_forecast | forecast_frustum.bool()
             valid = valid_num >= 20
-            # valid = valid_num >= 80
             mask.append(valid.cpu().numpy())
             forecast_mask.append(valid_forecast.cpu().numpy())
 
@@ -318,19 +317,6 @@ class Mesher(object):
 
         torch.cuda.empty_cache()
 
-def read_trajectory(filename):
-    traj = []
-    with open(filename, "r") as f:
-        metastr = f.readline()
-        while metastr:
-            metadata = map(int, metastr.split())
-            mat = np.zeros(shape=(4, 4))
-            for i in range(4):
-                matstr = f.readline()
-                mat[i, :] = np.fromstring(matstr, dtype=float, sep=" \t")
-            traj.append(mat)
-            metastr = f.readline()
-    return traj
 
 def get_traj(traj_path):
     print(f'Load trajectory from {traj_path}.')
@@ -361,13 +347,8 @@ def get_traj(traj_path):
             traj_to_register.append(poses[i])
 
     else:
-        traj_to_register = read_trajectory(traj_path)
-        # with open("test.xyz","w") as file_object:
-        #     for m in traj_to_register:
-        #         # p = - m[:3,:3].T @ m[:3,3:]
-        #         # p = p[:,0]
-        #         p =  m[:3,-1]
-        #         print("%f %f %f"%(p[0],p[1],p[2]),file=file_object)
+        # traj_to_register = read_trajectory(traj_path)
+        pass
     
     for i in range(len(traj_to_register)):
         c2w = torch.from_numpy(traj_to_register[i]).float()

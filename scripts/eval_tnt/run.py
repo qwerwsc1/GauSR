@@ -39,7 +39,6 @@ import numpy as np
 import open3d as o3d
 import os
 import argparse
-import json
 # import torch
 
 from config import scenes_tau_dict
@@ -120,6 +119,7 @@ def run_evaluation(dataset_dir, traj_path, ply_path, out_dir, view_crop):
         for i in range(len(ld)):
             traj_to_register.append(CameraPose(meta=None, mat=ld[i]))
     elif traj_path.endswith('.json'): # instant-npg or sdfstudio format
+        import json
         with open(traj_path, encoding='UTF-8') as f:
             meta = json.load(f)
         poses_dict = {}
@@ -145,10 +145,8 @@ def run_evaluation(dataset_dir, traj_path, ply_path, out_dir, view_crop):
 
     trajectory_transform = trajectory_alignment(map_file, traj_to_register,
                                                 gt_traj_col, gt_trans, scene)
-    # trans_inv = np.linalg.inv(gt_trans)
-    # transed_points = mesh.vertices @ trajectory_transform[:3,:3].T + trajectory_transform[None,:3,-1]
-    # transed_points = transed_points @ trans_inv[:3,:3].T + trans_inv[None,:3,-1]
 
+    
     # big pointclouds will be downlsampled to this number to speed up alignment
     dist_threshold = dTau
     # Refine alignment by using the actual GT and MVS pointclouds
@@ -160,7 +158,6 @@ def run_evaluation(dataset_dir, traj_path, ply_path, out_dir, view_crop):
     r3 = registration_vol_ds(pcd, gt_pcd, r2.transformation, vol, dTau / 2.0,
                              dTau * 20, 20)
     r = registration_unif(pcd, gt_pcd, r3.transformation, vol, 2 * dTau, 20)
-
     trajectory_transform = r.transformation
     
     # Histogramms and P/R/F1
@@ -194,16 +191,6 @@ def run_evaluation(dataset_dir, traj_path, ply_path, out_dir, view_crop):
     print("recall : %.4f" % eva[1])
     print("f-score : %.4f" % eva[2])
     print("==============================")
-    
-    data = {
-        "dTau": dTau,
-        "precision": precision,
-        "recall": recall,
-        "fscore": fscore
-    }
-
-    with open(os.path.join(out_dir, "metrics.json"), "w") as f:
-        json.dump(data, f)
 
     # Plotting
     plot_graph(

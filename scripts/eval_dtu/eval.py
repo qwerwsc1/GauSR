@@ -164,4 +164,3 @@ if __name__ == '__main__':
             'mean_s2d': mean_s2d,
             'overall': over_all,
         }, fp, indent=True)
-

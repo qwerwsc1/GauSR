@@ -1,8 +1,14 @@
-__pycache__/
-*.py[cod]
-*$py.class
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-build/
-*.egg-info/
+*.pyc
+.vscode
+output
+build
+data
+*.ply
+**/PKG-INFO
+# submodules
+**__pycache__**
+*.png
+*.out
+eval
+*.npz
+**/tmp

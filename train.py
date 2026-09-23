@@ -11,23 +11,24 @@
 
 import os
 import torch
-from random import randint, sample
-from utils.loss_utils import l1_loss, ssim, PatchMatch
+from random import randint
+from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
 from utils.general_utils import safe_state
 import uuid
 from tqdm import tqdm
-from utils.image_utils import psnr
+from utils.image_utils import psnr, render_net_image
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
-from utils.graphics_utils import depth_double_to_normal, depth_to_normal
+try:
+    from torch.utils.tensorboard import SummaryWriter
+    TENSORBOARD_FOUND = True
+except ImportError:
+    TENSORBOARD_FOUND = False
 
-import wandb
-os.environ.setdefault("WANDB_SILENT", "true")
-
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, use_wandb = False):
+def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
@@ -39,23 +40,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-    kernel_size = dataset.kernel_size
 
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
-    # fix problem
-    trainCameras = scene.getTrainCameras().copy()
-    gaussians.compute_3D_filter(cameras=trainCameras)
-
-    if opt.lambda_multi_view_ncc > 0 or opt.lambda_multi_view_geo > 0:
-        patchmatch = PatchMatch(opt.multi_view_patch_size, opt.multi_view_pixel_noise_th, kernel_size=kernel_size, pipe=pipe, model_path=dataset.model_path)
-
     viewpoint_stack = None
     ema_loss_for_log = 0.0
-    ema_normal_loss_for_log = 0.0
-    ema_ncc_loss_for_log = 0.0
-    os.makedirs(os.path.join(dataset.model_path, "debug"), exist_ok=True)
+    ema_dist_for_log = 0.0
+    ema_normal_for_log = 0.0
+
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
     for iteration in range(first_iter, opt.iterations + 1):        
@@ -72,122 +65,74 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
-
-        # Render
-        if (iteration - 1) == debug_from:
-            pipe.debug = True
-
-        bg = torch.rand((3), device="cuda") if opt.random_background else background
-
-        require_reg = iteration >= opt.regularization_from_iter
-        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, kernel_size, require_depth = require_reg)
+        
+        render_pkg = render(viewpoint_cam, gaussians, pipe, background)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-
-        # Loss
+        
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
-        rgb_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image.unsqueeze(0), gt_image.unsqueeze(0)))
+        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        
+        # regularization
+        lambda_normal = opt.lambda_normal if iteration > 7000 else 0.0
+        lambda_dist = opt.lambda_dist if iteration > 3000 else 0.0
 
-        # depth-normal consistency Loss
-        if require_reg and opt.lambda_depth_normal > 0:
-            rendered_expected_depth = render_pkg["expected_depth"]
-            rendered_median_depth = render_pkg["median_depth"]
-            rendered_normal = render_pkg["normal"]
-            if 0.0 < dataset.depth_ratio < 1.0:
-                depth_normal = depth_double_to_normal(viewpoint_cam, rendered_expected_depth, rendered_median_depth)
-                normal_error_map = 1 - torch.linalg.vecdot(rendered_normal.unsqueeze(0), depth_normal, dim=1)
-                depth_normal_loss = (1 - dataset.depth_ratio) * normal_error_map[0].mean() + dataset.depth_ratio * normal_error_map[1].mean()
-                depth_normal = None
-            else:
-                depth_map = rendered_expected_depth if dataset.depth_ratio < 1.0 else rendered_median_depth
-                depth_normal = depth_to_normal(viewpoint_cam, depth_map)
-                normal_error_map = 1 - torch.linalg.vecdot(rendered_normal, depth_normal, dim=0)
-                depth_normal_loss = normal_error_map.mean()
-        else:
-            depth_normal_loss = torch.tensor([0], dtype=torch.float32, device="cuda")
+        rend_dist = render_pkg["rend_dist"]
+        rend_normal  = render_pkg['rend_normal']
+        surf_normal = render_pkg['surf_normal']
+        normal_error = (1 - (rend_normal * surf_normal).sum(dim=0))[None]
+        normal_loss = lambda_normal * (normal_error).mean()
+        dist_loss = lambda_dist * (rend_dist).mean()
 
-       # patch match loss
-        if require_reg and opt.lambda_multi_view_ncc > 0:
-            nearest_cam = None if len(viewpoint_cam.nearest_id) == 0 else scene.getTrainCameras()[sample(viewpoint_cam.nearest_id, 1)[0]]
-            ncc_loss, geo_loss = patchmatch(gaussians, render_pkg, viewpoint_cam, nearest_cam, iteration, depth_normal)
-        else:
-            ncc_loss = torch.tensor([0], dtype=torch.float32, device="cuda")
-            geo_loss = torch.tensor([0], dtype=torch.float32, device="cuda")
+        # loss
+        total_loss = loss + dist_loss + normal_loss
+        
+        total_loss.backward()
 
-        loss = rgb_loss + opt.lambda_depth_normal * depth_normal_loss + opt.lambda_multi_view_ncc * ncc_loss + opt.lambda_multi_view_geo * geo_loss
-
-        if iteration % 200 == 0 and require_reg:
-            import cv2
-            import numpy as np
-            gt_img_show = (viewpoint_cam.original_image.permute(1, 2, 0).clamp(0, 1)[:, :, [2, 1, 0]] * 255).detach().cpu().numpy().astype(np.uint8)
-            img_show = ((render_pkg["render"]).permute(1, 2, 0).clamp(0, 1)[:, :, [2, 1, 0]] * 255).detach().cpu().numpy().astype(np.uint8)
-            normal_show = (((render_pkg["normal"] + 1.0) * 0.5).permute(1, 2, 0).clamp(0, 1) * 255).detach().cpu().numpy().astype(np.uint8)
-            depth_normal_show = (((depth_normal + 1.0) * 0.5).permute(1, 2, 0).clamp(0, 1) * 255).detach().cpu().numpy().astype(np.uint8)
-            # d_mask_show = (weights.float() * 255).detach().cpu().numpy().astype(np.uint8)
-            # d_mask_show_color = cv2.applyColorMap(d_mask_show, cv2.COLORMAP_MAGMA)
-            edepth = render_pkg["expected_depth"].squeeze().detach().cpu().numpy()
-            edepth_i = (edepth - edepth.min()) / (edepth.max() - edepth.min() + 1e-20)
-            edepth_i = (edepth_i * 255).clip(0, 255).astype(np.uint8)
-            edepth_color = cv2.applyColorMap(edepth_i, cv2.COLORMAP_MAGMA)
-
-            mdepth = render_pkg["median_depth"].squeeze().detach().cpu().numpy()
-            mdepth_i = (mdepth - mdepth.min()) / (mdepth.max() - mdepth.min() + 1e-20)
-            mdepth_i = (mdepth_i * 255).clip(0, 255).astype(np.uint8)
-            mdepth_color = cv2.applyColorMap(mdepth_i, cv2.COLORMAP_MAGMA)
-            row0 = np.concatenate([gt_img_show, img_show, depth_normal_show, edepth_color, mdepth_color, normal_show], axis=1)
-            # row0 = np.concatenate([gt_img_show, img_show], axis=1)
-            # row1 = np.concatenate([d_mask_show_color, depth_color, normal_show], axis=1)
-            image_to_show = np.concatenate([row0], axis=0)
-            cv2.imwrite(os.path.join(dataset.model_path, "debug", "%05d" % iteration + "_" + viewpoint_cam.image_name + ".jpg"), image_to_show)
-
-        loss.backward()
         iter_end.record()
 
         with torch.no_grad():
             # Progress bar
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
-            ema_normal_loss_for_log = 0.4 * depth_normal_loss.item() + 0.6 * ema_normal_loss_for_log
-            ema_ncc_loss_for_log = 0.4 * ncc_loss.item() + 0.6 * ema_ncc_loss_for_log
+            ema_dist_for_log = 0.4 * dist_loss.item() + 0.6 * ema_dist_for_log
+            ema_normal_for_log = 0.4 * normal_loss.item() + 0.6 * ema_normal_for_log
+
+
             if iteration % 10 == 0:
-                progress_bar.set_postfix({
-                    "Loss": f"{ema_loss_for_log:.{4}f}",
-                    "loss_normal": f"{ema_normal_loss_for_log:.{4}f}",
-                    "loss_ncc": f"{ema_ncc_loss_for_log:.{4}f}"})
+                loss_dict = {
+                    "Loss": f"{ema_loss_for_log:.{5}f}",
+                    "distort": f"{ema_dist_for_log:.{5}f}",
+                    "normal": f"{ema_normal_for_log:.{5}f}",
+                    "Points": f"{len(gaussians.get_xyz)}"
+                }
+                progress_bar.set_postfix(loss_dict)
+
                 progress_bar.update(10)
             if iteration == opt.iterations:
-                # record training time
-                import json
-                time = progress_bar.format_dict["elapsed"]
-                time_path = os.path.join(dataset.model_path, "training_time.json")
-                with open(time_path, "w") as f:
-                    json.dump({"training_time": progress_bar.format_interval(time)},f,indent=4)
                 progress_bar.close()
 
             # Log and save
-            training_report(iteration, loss, rgb_loss, depth_normal_loss, ncc_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background, kernel_size), use_wandb)
+            if tb_writer is not None:
+                tb_writer.add_scalar('train_loss_patches/dist_loss', ema_dist_for_log, iteration)
+                tb_writer.add_scalar('train_loss_patches/normal_loss', ema_normal_for_log, iteration)
+
+            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
 
+
             # Densification
             if iteration < opt.densify_until_iter:
-                # Keep track of max radii in image-space for pruning
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
-                    # change from 0.005 to 0.05
-                    gaussians.densify_and_prune(opt.densify_grad_threshold, 0.05, scene.cameras_extent, size_threshold)
-                    gaussians.compute_3D_filter(cameras=trainCameras)
+                    gaussians.densify_and_prune(opt.densify_grad_threshold, opt.opacity_cull, scene.cameras_extent, size_threshold)
                 
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
-
-            if iteration % 100 == 0 and iteration > opt.densify_until_iter:
-                if iteration < opt.iterations - 100:
-                    # don't update in the end of training
-                    gaussians.compute_3D_filter(cameras=trainCameras)
 
             # Optimizer step
             if iteration < opt.iterations:
@@ -197,6 +142,30 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
+
+        with torch.no_grad():        
+            if network_gui.conn == None:
+                network_gui.try_connect(dataset.render_items)
+            while network_gui.conn != None:
+                try:
+                    net_image_bytes = None
+                    custom_cam, do_training, keep_alive, scaling_modifer, render_mode = network_gui.receive()
+                    if custom_cam != None:
+                        render_pkg = render(custom_cam, gaussians, pipe, background, scaling_modifer)   
+                        net_image = render_net_image(render_pkg, dataset.render_items, render_mode, custom_cam)
+                        net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
+                    metrics_dict = {
+                        "#": gaussians.get_opacity.shape[0],
+                        "loss": ema_loss_for_log
+                        # Add more metrics as needed
+                    }
+                    # Send the data
+                    network_gui.send(net_image_bytes, dataset.source_path, metrics_dict)
+                    if do_training and ((iteration < int(opt.iterations)) or not keep_alive):
+                        break
+                except Exception as e:
+                    # raise e
+                    network_gui.conn = None
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
@@ -212,16 +181,21 @@ def prepare_output_and_logger(args):
     with open(os.path.join(args.model_path, "cfg_args"), 'w') as cfg_log_f:
         cfg_log_f.write(str(Namespace(**vars(args))))
 
-def training_report(iteration, loss, rgb_loss, normal_loss, ncc_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, use_wandb):
-    if use_wandb and wandb is not None:
-        wandb.log({
-            "train_loss_patches/l1_loss": rgb_loss.item(),
-            "train_loss_patches/depth_normal_loss": normal_loss.item(),
-            "train_loss_patches/ncc_loss": ncc_loss.item(),
-            "train_loss_patches/total_loss": loss.item(),
-            "iter_time": elapsed,
-            "iter": iteration
-        }, step=iteration)
+    # Create Tensorboard writer
+    tb_writer = None
+    if TENSORBOARD_FOUND:
+        tb_writer = SummaryWriter(args.model_path)
+    else:
+        print("Tensorboard not available: not logging progress")
+    return tb_writer
+
+@torch.no_grad()
+def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
+    if tb_writer:
+        tb_writer.add_scalar('train_loss_patches/reg_loss', Ll1.item(), iteration)
+        tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
+        tb_writer.add_scalar('iter_time', elapsed, iteration)
+        tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
 
     # Report test and samples of training set
     if iteration in testing_iterations:
@@ -234,21 +208,45 @@ def training_report(iteration, loss, rgb_loss, normal_loss, ncc_loss, elapsed, t
                 l1_test = 0.0
                 psnr_test = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
-                    image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
+                    render_pkg = renderFunc(viewpoint, scene.gaussians, *renderArgs)
+                    image = torch.clamp(render_pkg["render"], 0.0, 1.0).to("cuda")
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
-                    # if tb_writer and (idx < 5):
-                    #     tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
-                    #     if iteration == testing_iterations[0]:
-                    #         tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
+                    if tb_writer and (idx < 5):
+                        from utils.general_utils import colormap
+                        depth = render_pkg["surf_depth"]
+                        norm = depth.max()
+                        depth = depth / norm
+                        depth = colormap(depth.cpu().numpy()[0], cmap='turbo')
+                        tb_writer.add_images(config['name'] + "_view_{}/depth".format(viewpoint.image_name), depth[None], global_step=iteration)
+                        tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
+
+                        try:
+                            rend_alpha = render_pkg['rend_alpha']
+                            rend_normal = render_pkg["rend_normal"] * 0.5 + 0.5
+                            surf_normal = render_pkg["surf_normal"] * 0.5 + 0.5
+                            tb_writer.add_images(config['name'] + "_view_{}/rend_normal".format(viewpoint.image_name), rend_normal[None], global_step=iteration)
+                            tb_writer.add_images(config['name'] + "_view_{}/surf_normal".format(viewpoint.image_name), surf_normal[None], global_step=iteration)
+                            tb_writer.add_images(config['name'] + "_view_{}/rend_alpha".format(viewpoint.image_name), rend_alpha[None], global_step=iteration)
+
+                            rend_dist = render_pkg["rend_dist"]
+                            rend_dist = colormap(rend_dist.cpu().numpy()[0])
+                            tb_writer.add_images(config['name'] + "_view_{}/rend_dist".format(viewpoint.image_name), rend_dist[None], global_step=iteration)
+                        except:
+                            pass
+
+                        if iteration == testing_iterations[0]:
+                            tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
+
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
+
                 psnr_test /= len(config['cameras'])
-                l1_test /= len(config['cameras'])          
+                l1_test /= len(config['cameras'])
                 print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
-                if use_wandb:
-                    wandb.log({config['name'] + "/loss_viewpoint - l1_loss": l1_test, config['name'] + "/loss_viewpoint - psnr": psnr_test})
-        if use_wandb:
-            wandb.log({"total_points": scene.gaussians.get_xyz.shape[0], "iter": iteration})
+                if tb_writer:
+                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
+                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
+
         torch.cuda.empty_cache()
 
 if __name__ == "__main__":
@@ -258,28 +256,17 @@ if __name__ == "__main__":
     op = OptimizationParams(parser)
     pp = PipelineParams(parser)
     parser.add_argument('--ip', type=str, default="127.0.0.1")
-    parser.add_argument('--port', type=int, default=6008)
-    parser.add_argument('--debug_from', type=int, default=-1)
+    parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[15_000])
+    parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
-    # additional argument for using wandb
-    parser.add_argument("--use_wandb", action='store_true', default=False, help="Use wandb to record loss value")
-    parser.add_argument("--wandb_project", type=str, default="gssr", help="Wandb project name")
-    parser.add_argument("--wandb_entity", type=str, default="GauSR", help="Wandb entity/team name")
-    parser.add_argument("--run_name", type=str, default="dtu", help="Wandb run name")
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
     print("Optimizing " + args.model_path)
-
-    if args.use_wandb:
-        if wandb is None:
-            raise ImportError("wandb is not installed. Please run `pip install wandb` first.")
-        wandb.init(project=args.wandb_project, entity=args.wandb_entity, name=args.run_name, config=vars(args))
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
@@ -287,9 +274,7 @@ if __name__ == "__main__":
     # Start GUI server, configure and run training
     network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
+    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint)
 
     # All done
-    if args.use_wandb and wandb is not None:
-        wandb.finish()
     print("\nTraining complete.")
