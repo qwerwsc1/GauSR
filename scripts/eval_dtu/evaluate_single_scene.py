@@ -111,7 +111,7 @@ if __name__ == "__main__":
     parser.add_argument('--scan_id', type=str,  help='scan id of the input mesh')
     parser.add_argument('--output_dir', type=str, default='evaluation_results_single', help='path to the output folder')
     parser.add_argument('--mask_dir', type=str,  default='mask', help='path to uncropped mask')
-    parser.add_argument('--DTU', type=str,  default='Offical_DTU_Dataset', help='path to the GT DTU point clouds')
+    parser.add_argument('--DTU', type=str,  default='/home/wangsc/Documents/datasets/dtu_dataset/dtu_eval/', help='path to the GT DTU point clouds')
     args = parser.parse_args()
 
     Offical_DTU_Dataset = args.DTU

@@ -7,8 +7,8 @@ parser = ArgumentParser(description="Full evaluation script parameters")
 parser.add_argument("--skip_training", action="store_true")
 parser.add_argument("--skip_rendering", action="store_true")
 parser.add_argument("--skip_metrics", action="store_true")
-parser.add_argument("--output_path", default="./eval/dtu")
-parser.add_argument('--dtu', "-dtu", required=True, type=str)
+parser.add_argument("--output_path", default="/media/data/SurR/outputs/gausr/dtu-2d-apt")
+parser.add_argument('--dtu', "-dtu", default="/home/wangsc/Documents/datasets/dtu_dataset/dtu/", required=True, type=str)
 args, _ = parser.parse_known_args()
 
 all_scenes = []
@@ -44,7 +44,7 @@ if not args.skip_metrics:
         iteration = 30000
         string = f"python {script_dir}/eval_dtu/evaluate_single_scene.py " + \
             f"--input_mesh {args.output_path}/{scene}/train/ours_30000/fuse_post.ply " + \
-            f"--scan_id {scan_id} --output_dir {script_dir}/tmp/scan{scan_id} " + \
+            f"--scan_id {scan_id} --output_dir {script_dir}/scan{scan_id} " + \
             f"--mask_dir {args.dtu} " + \
             f"--DTU {args.DTU_Official}"
         

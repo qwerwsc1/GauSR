@@ -383,7 +383,12 @@ renderCUDA(
 			// Obtain alpha by multiplying with Gaussian opacity
 			// and its exponential falloff from mean.
 			// Avoid numerical instabilities (see paper appendix). 
-			float alpha = min(0.99f, opa * exp(power));
+
+			// -------- Kernel design -------- // 
+			// // Gaussian kernel with approximation
+			// float alpha = min(0.99f, opa * exp(power));
+			// // Gaussian kernel without approximation
+			float alpha = 1.f - expf(-opa * exp(power));
 			if (alpha < 1.0f / 255.0f)
 				continue;
 			float test_T = T * (1 - alpha);
