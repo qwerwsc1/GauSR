@@ -11,6 +11,11 @@
 
 #include "forward.h"
 #include "auxiliary.h"
+#include "footprint_activation.cuh"
+#include <stdexcept>
+#if TIGHTBBOX
+#error "Macrofacet adapter expects TIGHTBBOX=0 (fixed low-pass center)."
+#endif
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 namespace cg = cooperative_groups;
@@ -121,6 +126,7 @@ __device__ bool compute_aabb(
 	float cutoff,
 	float2& point_image,
 	float2& extent
+	// float kernel_size
 ) {
 	glm::vec3 t = glm::vec3(cutoff * cutoff, cutoff * cutoff, -1.0f);
 	float d = glm::dot(t, T[2] * T[2]);
@@ -140,6 +146,9 @@ __device__ bool compute_aabb(
 
 	glm::vec2 h = sqrt(max(glm::vec2(1e-4, 1e-4), h0));
 	point_image = {p.x, p.y};
+	// // The extent is enlarged by the kernel size to account for the screen space mip filter. This is an upper bound for the true extent.
+	// float mip_extent = cutoff * sqrtf(kernel_size);
+	// extent = {h.x + mip_extent, h.y + mip_extent};
 	extent = {h.x, h.y};
 	return true;
 }
@@ -227,7 +236,14 @@ __global__ void preprocessCUDA(int P, int D, int M,
 		float2 extent;
 		bool ok = compute_aabb(T, cutoff, point_image, extent);
 		if (!ok) return;
-		radius = ceil(max(max(extent.x, extent.y), cutoff * FilterSize));
+		// Preserve the original 3-sigma low-pass center: backward differentiates it.
+        // Enlarge only the tile radius for the stronger directional footprint.
+        float2 expanded_center, expanded_extent;
+        if (!compute_aabb(T, FOOTPRINT_CUTOFF, expanded_center, expanded_extent))
+            return;
+        const float rx = fabsf(expanded_center.x - point_image.x) + expanded_extent.x;
+        const float ry = fabsf(expanded_center.y - point_image.y) + expanded_extent.y;
+        radius = ceil(max(max(rx, ry), FOOTPRINT_CUTOFF * FilterSize));
 	}
 
 	uint2 rect_min, rect_max;
@@ -279,6 +295,8 @@ renderCUDA(
 	uint2 pix = { pix_min.x + block.thread_index().x, pix_min.y + block.thread_index().y };
 	uint32_t pix_id = W * pix.y + pix.x;
 	float2 pixf = { (float)pix.x, (float)pix.y};
+	const footprint::Vec3 fp_ray = footprint::camera_ray(
+		pixf.x, pixf.y, W, H, focal_x, focal_y);
 
 	// Check if this thread is associated with a valid pixel or outside.
 	bool inside = pix.x < W&& pix.y < H;
@@ -364,6 +382,7 @@ renderCUDA(
 			float2 d = {xy.x - pixf.x, xy.y - pixf.y};
 			float rho2d = FilterInvSquare * (d.x * d.x + d.y * d.y); 
 			float rho = min(rho3d, rho2d);
+			if (rho > FOOTPRINT_CUTOFF * FOOTPRINT_CUTOFF) continue;
 
 			// compute depth
 			float depth = (s.x * Tw.x + s.y * Tw.y) + Tw.z;
@@ -388,7 +407,11 @@ renderCUDA(
 			// // Gaussian kernel with approximation
 			// float alpha = min(0.99f, opa * exp(power));
 			// // Gaussian kernel without approximation
-			float alpha = 1.f - expf(-opa * 4.60517f * exp(power));
+			const float G = expf(power);
+            const footprint::Incidence fp_inc = footprint::incidence(
+                {nor_o.x, nor_o.y, nor_o.z}, fp_ray);
+            const footprint::Result fp = footprint::activation(opa, G, fp_inc.mu);
+            const float alpha = fp.alpha;
 			if (alpha < 1.0f / 255.0f)
 				continue;
 			float test_T = T * (1 - alpha);
@@ -512,6 +535,13 @@ void FORWARD::preprocess(int P, int D, int M,
 	uint32_t* tiles_touched,
 	bool prefiltered)
 {
+    // Python sigmoid fixes opacity to [0,1]; enforce that the fixed support is sufficient.
+    if (footprint::supported_opacity_max() < 1.0f)
+        throw std::invalid_argument("Footprint scale/ratio requires a larger FOOTPRINT_CUTOFF");
+#if FOOTPRINT_MODE >= 2 && FOOTPRINT_MODE <= 4
+    if (transMat_precomp != nullptr)
+        throw std::invalid_argument("Directional footprints require compute_cov3D_python=False");
+#endif
 	preprocessCUDA<NUM_CHANNELS> << <(P + 255) / 256, 256 >> > (
 		P, D, M,
 		means3D,

@@ -11,6 +11,10 @@
 
 #include "backward.h"
 #include "auxiliary.h"
+#include "footprint_activation.cuh"
+#if TIGHTBBOX
+#error "Macrofacet adapter expects TIGHTBBOX=0 (fixed low-pass center)."
+#endif
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 namespace cg = cooperative_groups;
@@ -171,6 +175,8 @@ renderCUDA(
 	const uint2 pix = { pix_min.x + block.thread_index().x, pix_min.y + block.thread_index().y };
 	const uint32_t pix_id = W * pix.y + pix.x;
 	const float2 pixf = {(float)pix.x, (float)pix.y};
+	const footprint::Vec3 fp_ray = footprint::camera_ray(
+		pixf.x, pixf.y, W, H, focal_x, focal_y);
 
 	const bool inside = pix.x < W&& pix.y < H;
 	const uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
@@ -294,6 +300,7 @@ renderCUDA(
 			float2 d = {xy.x - pixf.x, xy.y - pixf.y};
 			float rho2d = FilterInvSquare * (d.x * d.x + d.y * d.y); 
 			float rho = min(rho3d, rho2d);
+			if (rho > FOOTPRINT_CUTOFF * FOOTPRINT_CUTOFF) continue;
 
 			// compute depth
 			float c_d = (s.x * Tw.x + s.y * Tw.y) + Tw.z; // Tw * [u,v,1]
@@ -317,7 +324,10 @@ renderCUDA(
 			// // Gaussian kernel with approximation
 			// const float alpha = min(0.99f, opa * G);
   			// // Gaussian kernel without approximation
-  			float alpha = 1.f - expf(-opa * 4.60517f * G);
+			const footprint::Incidence fp_inc = footprint::incidence(
+                {nor_o.x, nor_o.y, nor_o.z}, fp_ray);
+            const footprint::Result fp = footprint::activation(opa, G, fp_inc.mu);
+            const float alpha = fp.alpha;
 			if (alpha < 1.0f / 255.0f)
 				continue;
 
@@ -396,8 +406,13 @@ renderCUDA(
 
 
 			// Helpful reusable temporary variables
-			dL_dalpha *= 4.60517f * expf(-opa * 4.60517f * G);
-			const float dL_dG = nor_o.w * dL_dalpha;
+			// Keep dL_dalpha as the alpha adjoint, after ALL compositing terms.
+            const float dL_dG = fp.d_G * dL_dalpha;
+            const float dL_dmu = fp.d_mu * dL_dalpha;
+            // This is required even when normal-map rendering is disabled.
+            atomicAdd(&dL_dnormal3D[global_id * 3 + 0], dL_dmu * fp_inc.d_normal.x);
+            atomicAdd(&dL_dnormal3D[global_id * 3 + 1], dL_dmu * fp_inc.d_normal.y);
+            atomicAdd(&dL_dnormal3D[global_id * 3 + 2], dL_dmu * fp_inc.d_normal.z);
 #if RENDER_AXUTILITY
 			dL_dz += alpha * T * dL_ddepth; 
 #endif
@@ -446,7 +461,7 @@ renderCUDA(
 			}
 
 			// Update gradients w.r.t. opacity of the Gaussian
-			atomicAdd(&(dL_dopacity[global_id]), G * dL_dalpha);
+			atomicAdd(&(dL_dopacity[global_id]), fp.d_opacity * dL_dalpha);
 		}
 	}
 }

@@ -14,6 +14,14 @@ from torch.utils.cpp_extension import CUDAExtension, BuildExtension
 import os
 os.path.dirname(os.path.abspath(__file__))
 
+# Explicit build configuration shared by forward and backward.
+footprint_flags = []
+for key in ("MODE", "SCALE", "SLOPE_T", "SLOPE_N", "MU_MIN", "RATIO_MAX", "CDF_OFFSET", "CUTOFF"):
+    value = os.environ.get("FOOTPRINT_" + key)
+    if value is not None:
+        float(value)  # Reject arbitrary compiler arguments.
+        footprint_flags.append("-DFOOTPRINT_" + key + "=" + (str(int(value)) if key == "MODE" else repr(float(value)) + "f"))
+
 setup(
     name="diff_surfel_rasterization",
     packages=['diff_surfel_rasterization'],
@@ -27,7 +35,7 @@ setup(
             "cuda_rasterizer/backward.cu",
             "rasterize_points.cu",
             "ext.cpp"],
-            extra_compile_args={"nvcc": ["-I" + os.path.join(os.path.dirname(os.path.abspath(__file__)), "third_party/glm/")]})
+            extra_compile_args={"nvcc": footprint_flags + ["-I" + os.path.join(os.path.dirname(os.path.abspath(__file__)), "third_party/glm/")]})
         ],
     cmdclass={
         'build_ext': BuildExtension
