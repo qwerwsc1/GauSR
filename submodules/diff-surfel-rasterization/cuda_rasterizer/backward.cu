@@ -317,7 +317,7 @@ renderCUDA(
 			// // Gaussian kernel with approximation
 			// const float alpha = min(0.99f, opa * G);
   			// // Gaussian kernel without approximation
-  			float alpha = 1.f - expf(-opa * G);
+  			float alpha = 1.f - expf(-opa * 4.60517f * G);
 			if (alpha < 1.0f / 255.0f)
 				continue;
 
@@ -396,7 +396,7 @@ renderCUDA(
 
 
 			// Helpful reusable temporary variables
-			dL_dalpha *= expf(-opa * G);
+			dL_dalpha *= 4.60517f * expf(-opa * 4.60517f * G);
 			const float dL_dG = nor_o.w * dL_dalpha;
 #if RENDER_AXUTILITY
 			dL_dz += alpha * T * dL_ddepth; 
