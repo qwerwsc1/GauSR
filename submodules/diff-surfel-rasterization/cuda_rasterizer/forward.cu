@@ -388,7 +388,7 @@ renderCUDA(
 			// // Gaussian kernel with approximation
 			// float alpha = min(0.99f, opa * exp(power));
 			// // Gaussian kernel without approximation
-			float alpha = 1.f - expf(-opa * exp(power));
+			float alpha = 1.f - expf(-opa * 4.60517f * exp(power));
 			if (alpha < 1.0f / 255.0f)
 				continue;
 			float test_T = T * (1 - alpha);
