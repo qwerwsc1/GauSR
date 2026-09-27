@@ -8,14 +8,14 @@ parser.add_argument("--skip_training", action="store_true")
 parser.add_argument("--skip_rendering", action="store_true")
 parser.add_argument("--skip_metrics", action="store_true")
 parser.add_argument("--output_path", default="/media/data/SurR/outputs/gausr/dtu-2d-apt-hp")
-parser.add_argument('--dtu', "-dtu", default="/home/wangsc/Documents/datasets/dtu_dataset/dtu/", required=True, type=str)
+parser.add_argument('--dtu', default="/home/wangsc/Documents/datasets/dtu_dataset/dtu/")
 args, _ = parser.parse_known_args()
 
 all_scenes = []
 all_scenes.extend(dtu_scenes)
 
 if not args.skip_metrics:
-    parser.add_argument('--DTU_Official', "-DTU", default="/home/wangsc/Documents/datasets/dtu_dataset/dtu_eval/", required=True, type=str)
+    parser.add_argument('--DTU_Official', default="/home/wangsc/Documents/datasets/dtu_dataset/dtu_eval/")
     args = parser.parse_args()
 
 
