@@ -406,29 +406,63 @@ renderCUDA(
 
 			float4 nor_o = collected_normal_opacity[j];
 			float normal[3] = {nor_o.x, nor_o.y, nor_o.z};
+			// Vector representation,
+			// used for ray-normal calculation
+			float3 normal_raw = {
+				nor_o.x,
+				nor_o.y,
+				nor_o.z
+			};
+
 			float opa = nor_o.w;
 
 			float power = -0.5f * rho;
 			if (power > 0.0f)
 				continue;
 
-			float nlen =
-				sqrtf(
-					normal.x * normal.x +
-					normal.y * normal.y +
-					normal.z * normal.z
+			// ============================================
+			// normalize surface normal
+			// ============================================
+
+			float normal_norm2 =
+				normal_raw.x * normal_raw.x +
+				normal_raw.y * normal_raw.y +
+				normal_raw.z * normal_raw.z;
+
+
+			float inv_normal_norm =
+				rsqrtf(
+					normal_norm2 +
+					1e-8f
 				);
 
-			normal.x /= nlen;
-			normal.y /= nlen;
-			normal.z /= nlen;
+
+			float3 normal_hat = {
+				normal_raw.x * inv_normal_norm,
+				normal_raw.y * inv_normal_norm,
+				normal_raw.z * inv_normal_norm
+			};
+
+
+			// ============================================
+			// ray-normal angle
+			// ============================================
+
+			float q =
+				normal_hat.x * ray_dir.x +
+				normal_hat.y * ray_dir.y +
+				normal_hat.z * ray_dir.z;
+
+
+			const float COS_EPS =
+				1e-2f;
+
+
 			float cos_theta =
-				fabsf(
-					normal.x * ray_dir.x +
-					normal.y * ray_dir.y +
-					normal.z * ray_dir.z
+				max(
+					fabsf(q),
+					COS_EPS
 				);
-			cos_theta = max(cos_theta, 1e-3f);
 			// Eq. (2) from 3D Gaussian splatting paper.
 			// Obtain alpha by multiplying with Gaussian opacity
 			// and its exponential falloff from mean.
