@@ -11,10 +11,6 @@
 
 #include "backward.h"
 #include "auxiliary.h"
-#include "footprint_activation.cuh"
-#if TIGHTBBOX
-#error "Macrofacet adapter expects TIGHTBBOX=0 (fixed low-pass center)."
-#endif
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 namespace cg = cooperative_groups;
@@ -175,8 +171,27 @@ renderCUDA(
 	const uint2 pix = { pix_min.x + block.thread_index().x, pix_min.y + block.thread_index().y };
 	const uint32_t pix_id = W * pix.y + pix.x;
 	const float2 pixf = {(float)pix.x, (float)pix.y};
-	const footprint::Vec3 fp_ray = footprint::camera_ray(
-		pixf.x, pixf.y, W, H, focal_x, focal_y);
+	// ======================================================
+	// Camera ray direction in view space
+	// Compute once per pixel
+	// ======================================================
+
+	float3 ray_dir = {
+		((float)pix.x - 0.5f * (W - 1)) / focal_x,
+		((float)pix.y - 0.5f * (H - 1)) / focal_y,
+		1.0f
+	};
+
+	float inv_ray_norm = rsqrtf(
+		ray_dir.x * ray_dir.x +
+		ray_dir.y * ray_dir.y +
+		ray_dir.z * ray_dir.z +
+		1e-8f
+	);
+
+	ray_dir.x *= inv_ray_norm;
+	ray_dir.y *= inv_ray_norm;
+	ray_dir.z *= inv_ray_norm;
 
 	const bool inside = pix.x < W&& pix.y < H;
 	const uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
@@ -300,7 +315,6 @@ renderCUDA(
 			float2 d = {xy.x - pixf.x, xy.y - pixf.y};
 			float rho2d = FilterInvSquare * (d.x * d.x + d.y * d.y); 
 			float rho = min(rho3d, rho2d);
-			if (rho > FOOTPRINT_CUTOFF * FOOTPRINT_CUTOFF) continue;
 
 			// compute depth
 			float c_d = (s.x * Tw.x + s.y * Tw.y) + Tw.z; // Tw * [u,v,1]
@@ -309,11 +323,51 @@ renderCUDA(
 			if (c_d < near_n) continue;
 			
 			float4 nor_o = collected_normal_opacity[j];
+			float3 normal_raw = {
+				nor_o.x,
+				nor_o.y,
+				nor_o.z
+			};
 			float normal[3] = {nor_o.x, nor_o.y, nor_o.z};
 			float opa = nor_o.w;
 
-			// accumulations
+			// ======================================================
+			// Normalize normal ONLY for ray-angle computation
+			// ======================================================
 
+			float normal_norm2 =
+				normal_raw.x * normal_raw.x +
+				normal_raw.y * normal_raw.y +
+				normal_raw.z * normal_raw.z;
+
+			float inv_normal_norm =
+				rsqrtf(normal_norm2 + 1e-8f);
+
+			float3 normal_hat = {
+				normal_raw.x * inv_normal_norm,
+				normal_raw.y * inv_normal_norm,
+				normal_raw.z * inv_normal_norm
+			};
+
+
+			// q = n_hat dot ray
+			float q =
+				normal_hat.x * ray_dir.x +
+				normal_hat.y * ray_dir.y +
+				normal_hat.z * ray_dir.z;
+
+
+			// float abs_q = fabsf(q);
+
+
+			// Important: must be the SAME epsilon as forward
+			const float COS_EPS = 0.02f;
+
+			float cos_theta =
+				sqrtf(q * q + COS_EPS * COS_EPS);
+
+
+			// accumulations
 			float power = -0.5f * rho;
 			if (power > 0.0f)
 				continue;
@@ -324,10 +378,15 @@ renderCUDA(
 			// // Gaussian kernel with approximation
 			// const float alpha = min(0.99f, opa * G);
   			// // Gaussian kernel without approximation
-			const footprint::Incidence fp_inc = footprint::incidence(
-                {nor_o.x, nor_o.y, nor_o.z}, fp_ray);
-            const footprint::Result fp = footprint::activation(opa, G, fp_inc.mu);
-            const float alpha = fp.alpha;
+  			// float alpha = 1.f - expf(-opa * G);
+			float tau =
+				opa * G / cos_theta;
+
+			float alpha_unclamped =
+				1.0f - expf(-tau);
+
+			float alpha =
+    			min(0.99f, alpha_unclamped);
 			if (alpha < 1.0f / 255.0f)
 				continue;
 
@@ -406,17 +465,120 @@ renderCUDA(
 
 
 			// Helpful reusable temporary variables
-			// Keep dL_dalpha as the alpha adjoint, after ALL compositing terms.
-            const float dL_dG = fp.d_G * dL_dalpha;
-            const float dL_dmu = fp.d_mu * dL_dalpha;
-            // This is required even when normal-map rendering is disabled.
-            atomicAdd(&dL_dnormal3D[global_id * 3 + 0], dL_dmu * fp_inc.d_normal.x);
-            atomicAdd(&dL_dnormal3D[global_id * 3 + 1], dL_dmu * fp_inc.d_normal.y);
-            atomicAdd(&dL_dnormal3D[global_id * 3 + 2], dL_dmu * fp_inc.d_normal.z);
+			// dL_dalpha *= expf(-opa * G);
+			// const float dL_dG = nor_o.w * dL_dalpha;
+			// ======================================================
+			// Backprop through
+			//
+			// tau   = opa * G / cos_theta
+			// alpha = 1 - exp(-tau)
+			// ======================================================
+
+
+			// If forward DOES NOT clamp alpha:
+			float alpha_grad_mask =
+				(alpha_unclamped < 0.99f)
+				? 1.0f
+				: 0.0f;
+
+			float dL_dtau =
+				dL_dalpha *
+				alpha_grad_mask *
+				expf(-tau);
+
+
+			// If forward uses:
+			// alpha = min(0.99f, alpha_unclamped)
+			//
+			// then instead use:
+			//
+			// float alpha_grad_mask =
+			//     (alpha_unclamped < 0.99f) ? 1.0f : 0.0f;
+			//
+			// float dL_dtau =
+			//     dL_dalpha *
+			//     alpha_grad_mask *
+			//     expf(-tau);
+
+
+			// ------------------------------------------------------
+			// Gradient wrt G
+			// ------------------------------------------------------
+
+			const float dL_dG =
+				dL_dtau *
+				opa /
+				cos_theta;
+
+
+			// ------------------------------------------------------
+			// Gradient wrt opacity
+			// ------------------------------------------------------
+
+			const float dL_dopa =
+				dL_dtau *
+				G /
+				cos_theta;
+
+
+			// ------------------------------------------------------
+			// Gradient wrt cos(theta)
+			// ------------------------------------------------------
+
+			float dL_dcos =
+				-dL_dtau *
+				opa *
+				G /
+				(cos_theta * cos_theta);
 #if RENDER_AXUTILITY
 			dL_dz += alpha * T * dL_ddepth; 
 #endif
 
+			// float sign_q =
+			// 	q >= 0.0f
+			// 	? 1.0f
+			// 	: -1.0f;
+
+			float dL_dq =
+				dL_dcos *
+				q /
+				cos_theta;
+
+			float3 dq_dn = {
+				(ray_dir.x -
+				q * normal_hat.x)
+					* inv_normal_norm,
+
+				(ray_dir.y -
+				q * normal_hat.y)
+					* inv_normal_norm,
+
+				(ray_dir.z -
+				q * normal_hat.z)
+					* inv_normal_norm
+			};
+
+			atomicAdd(
+				&dL_dnormal3D[
+					global_id * 3 + 0
+				],
+				dL_dq * dq_dn.x
+			);
+
+			atomicAdd(
+				&dL_dnormal3D[
+					global_id * 3 + 1
+				],
+				dL_dq * dq_dn.y
+			);
+
+			atomicAdd(
+				&dL_dnormal3D[
+					global_id * 3 + 2
+				],
+				dL_dq * dq_dn.z
+			);
+			
 			if (rho3d <= rho2d) {
 				// Update gradients w.r.t. covariance of Gaussian 3x3 (T)
 				const float2 dL_ds = {
@@ -461,7 +623,11 @@ renderCUDA(
 			}
 
 			// Update gradients w.r.t. opacity of the Gaussian
-			atomicAdd(&(dL_dopacity[global_id]), fp.d_opacity * dL_dalpha);
+			// atomicAdd(&(dL_dopacity[global_id]), G * dL_dalpha);
+			atomicAdd(
+				&(dL_dopacity[global_id]),
+				dL_dopa
+			);
 		}
 	}
 }

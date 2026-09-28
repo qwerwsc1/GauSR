@@ -295,8 +295,22 @@ renderCUDA(
 	uint2 pix = { pix_min.x + block.thread_index().x, pix_min.y + block.thread_index().y };
 	uint32_t pix_id = W * pix.y + pix.x;
 	float2 pixf = { (float)pix.x, (float)pix.y};
-	const footprint::Vec3 fp_ray = footprint::camera_ray(
-		pixf.x, pixf.y, W, H, focal_x, focal_y);
+	float3 ray_dir = make_float3(
+		((float)pix.x - 0.5f * (W - 1)) / focal_x,
+		((float)pix.y - 0.5f * (H - 1)) / focal_y,
+		1.0f
+	);
+
+	float ray_norm =
+		sqrtf(
+			ray_dir.x * ray_dir.x +
+			ray_dir.y * ray_dir.y +
+			ray_dir.z * ray_dir.z
+		);
+
+	ray_dir.x /= ray_norm;
+	ray_dir.y /= ray_norm;
+	ray_dir.z /= ray_norm;
 
 	// Check if this thread is associated with a valid pixel or outside.
 	bool inside = pix.x < W&& pix.y < H;
@@ -382,7 +396,7 @@ renderCUDA(
 			float2 d = {xy.x - pixf.x, xy.y - pixf.y};
 			float rho2d = FilterInvSquare * (d.x * d.x + d.y * d.y); 
 			float rho = min(rho3d, rho2d);
-			if (rho > FOOTPRINT_CUTOFF * FOOTPRINT_CUTOFF) continue;
+			// if (rho > FOOTPRINT_CUTOFF * FOOTPRINT_CUTOFF) continue;
 
 			// compute depth
 			float depth = (s.x * Tw.x + s.y * Tw.y) + Tw.z;
@@ -398,6 +412,23 @@ renderCUDA(
 			if (power > 0.0f)
 				continue;
 
+			float nlen =
+				sqrtf(
+					normal.x * normal.x +
+					normal.y * normal.y +
+					normal.z * normal.z
+				);
+
+			normal.x /= nlen;
+			normal.y /= nlen;
+			normal.z /= nlen;
+			float cos_theta =
+				fabsf(
+					normal.x * ray_dir.x +
+					normal.y * ray_dir.y +
+					normal.z * ray_dir.z
+				);
+			cos_theta = max(cos_theta, 1e-3f);
 			// Eq. (2) from 3D Gaussian splatting paper.
 			// Obtain alpha by multiplying with Gaussian opacity
 			// and its exponential falloff from mean.
@@ -407,11 +438,11 @@ renderCUDA(
 			// // Gaussian kernel with approximation
 			// float alpha = min(0.99f, opa * exp(power));
 			// // Gaussian kernel without approximation
-			const float G = expf(power);
-            const footprint::Incidence fp_inc = footprint::incidence(
-                {nor_o.x, nor_o.y, nor_o.z}, fp_ray);
-            const footprint::Result fp = footprint::activation(opa, G, fp_inc.mu);
-            const float alpha = fp.alpha;
+			const float alpha = 1.f - expf(-opa * exp(power) / cos_theta);
+            // const footprint::Incidence fp_inc = footprint::incidence(
+            //     {nor_o.x, nor_o.y, nor_o.z}, fp_ray);
+            // const footprint::Result fp = footprint::activation(opa, G, fp_inc.mu);
+            // const float alpha = fp.alpha;
 			if (alpha < 1.0f / 255.0f)
 				continue;
 			float test_T = T * (1 - alpha);
